@@ -1,0 +1,7 @@
+{
+  "_comment": "Team members who use the CV tool - this is the 'Your name' picker in the app, i.e. who SENDS a CV. It is a separate list from the heads who RECEIVE every CV (CV_RECIPIENTS in mailer.py). Someone can be on both. The app sends from one shared mailbox, but each email is labelled with the member's name and carries their address as Reply-To, so a head replying reaches the right person. Add or remove entries here and restart api.py - no code change needed.",
+  "members": [
+    { "name": "Rishi Surana", "email": "rishisurana5555@gmail.com" },
+    { "name": "Shubham Tyagi", "email": "shubhamtyagi.rj@gmail.com" }
+  ]
+}
