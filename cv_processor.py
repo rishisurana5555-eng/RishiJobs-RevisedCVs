@@ -118,11 +118,15 @@ WATERMARK_OPACITY = 0.10
 #: Watermark width as a fraction of the page width.
 WATERMARK_SCALE = 0.55
 
-#: The CV's own content is only scaled down when it would still be this
-#: readable; below it, the page keeps full size and runs onto another sheet
-#: instead. Shrinking a CV to clear the details box makes it unreadable, and
-#: an extra page costs nothing.
-SHRINK_TOLERANCE = 0.90
+#: How small the CV's own text may be scaled, as a fraction of its original
+#: size. Anything that would go below this is left at full size and allowed to
+#: run onto another page instead, leaving white space rather than text the
+#: reader has to zoom in on.
+#:
+#: At 0.97 an 11pt CV never drops below about 10.7pt - close enough to be
+#: invisible - and the allowance only exists to save a whole extra page when
+#: the content overruns by a line or two. It is not a licence to shrink.
+SHRINK_TOLERANCE = 0.97
 
 #: Breathing room between the logo band and the CV content beneath it.
 CONTENT_TOP_GAP = 6.0
@@ -1055,6 +1059,9 @@ def _flow_page(
         page.draw_rect(page.rect, color=None, fill=paper)
         papers.append(paper)
         top = box_bottom if is_first else HEADER_BAND_HEIGHT + CONTENT_TOP_GAP
+        # Scaled to fit rather than split: there is no text to break between,
+        # and clipping a scanned page would lose whatever is at the bottom of
+        # it. SHRINK_TOLERANCE does not apply for that reason.
         plain = min(1.0, (size.y1 - top) / size.height)
         placed = size.width * plain
         page.show_pdf_page(

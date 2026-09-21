@@ -198,9 +198,11 @@ The CV's own content is kept at **full size and never shrunk to make room** for 
 
 A page that continues from the previous one gets a deeper top margin (`CONTINUATION_TOP_GAP`), since its content starts mid-sentence rather than with the CV's own header and would otherwise run straight into the logo band.
 
-Pages that carry no details box (page 2 onward) lose only the logo band, so they are scaled by about 7% rather than being split - not enough to notice, and it avoids a 50pt sliver page after every sheet.
+`SHRINK_TOLERANCE` (0.97) sets where that choice tips. An 11pt CV never drops below about 10.7pt - close enough to be invisible - and that small allowance exists only to save a whole extra page when the content overruns by a line or two. Anything that would shrink further keeps full size and runs onto the next page, leaving white space rather than text the reader has to zoom in on.
 
-`SHRINK_TOLERANCE` sets where that choice tips: content is scaled if it would still be at least this fraction of full size, otherwise it keeps full size and runs on.
+The cost is pages: a dense two-page CV may come back as three, the last carrying only the few lines that would not fit. That is the intended trade - readable text over a tidy page count. Lower `SHRINK_TOLERANCE` if you would rather have fewer pages and slightly smaller text.
+
+A scanned or image-only page is the exception: it is scaled to fit rather than split, because there is no text to break between and clipping it would lose whatever sits at the bottom.
 
 ---
 
