@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy this file to team.json and fill in the real people. team.json is git-ignored so nobody's address is published. It is the 'Edited by' picker in the app, and it decides where each revised CV is sent - a CV goes to whoever edited it. On a deployed app there is no team.json, so set a TEAM_MEMBERS secret instead: \"Name <address>; Name <address>\".",
+  "members": [
+    { "name": "First Last", "email": "first.last@example.com" },
+    { "name": "Second Person", "email": "second@example.com" }
+  ]
+}

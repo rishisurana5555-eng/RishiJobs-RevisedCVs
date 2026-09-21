@@ -39,19 +39,22 @@ The Streamlit app calls the processing code directly, so that is the only proces
    SMTP_PORT = "587"
    SMTP_USER = "rishisurana5555@gmail.com"
    SMTP_PASSWORD = "your16charapppassword"
+   TEAM_MEMBERS = "Rishi Surana <rishisurana5555@gmail.com>; Shubham Tyagi <shubhamtyagi.rj@gmail.com>"
    ```
 
-   These are the same values as `.env`, in TOML form. The app copies them into the environment at startup.
+   These are the same values as `.env`, in TOML form. The app copies them into the environment at startup. `TEAM_MEMBERS` is needed because `team.json` is git-ignored and never reaches the server.
 4. Deploy.
 5. **Settings → Sharing → set the app to private**, then invite each team member by their Google address. Without this the URL is public, and anyone who finds it can process CVs and email your heads.
 
 `packages.txt` installs DejaVu fonts: the deploy runs on Linux, where Arial does not exist, and without a Unicode font the ₹ sign falls back to `?`.
 
-To add team members on the deployed app, either edit `team.json` and push, or add a `TEAM_MEMBERS` secret:
+**The deployed app has no `team.json`** - it is git-ignored, so it never reaches the server. Add the team as a secret instead, alongside the SMTP settings:
 
 ```toml
 TEAM_MEMBERS = "Rishi Surana <rishisurana5555@gmail.com>; Shubham Tyagi <shubhamtyagi.rj@gmail.com>"
 ```
+
+Without it the "Edited by" picker is empty and CVs fall back to `FALLBACK_RECIPIENTS`. To add someone later, edit that secret - no push needed.
 
 ---
 
@@ -63,7 +66,7 @@ TEAM_MEMBERS = "Rishi Surana <rishisurana5555@gmail.com>; Shubham Tyagi <shubham
 | `app.py` | Streamlit front end - the app itself |
 | `api.py` | Optional: the same processing as an HTTP API |
 | `mailer.py` | Sends the finished CV by email |
-| `team.json` | The team members who use the tool |
+| `team.json` | The team members who use the tool (git-ignored; copy from `team.example.json`) |
 | `templates/logo.png` | The Rishi Jobs logo |
 | `samples/` | A test CV |
 
@@ -114,7 +117,7 @@ Every email goes out from **one shared mailbox** (the `SMTP_USER` in `.env` - Ri
 
 Gmail will not let an account send as somebody else's address anyway, so a per-person `From` would need Google OAuth. This upgrades to that later without redoing anything else.
 
-Members live in **`team.json`** - this is the "Edited by" picker, and it is also what decides where each CV is sent:
+Members live in **`team.json`**, which is **git-ignored** so nobody's address is published. Copy `team.example.json` to `team.json` and fill it in. It is the "Edited by" picker, and it decides where each CV is sent:
 
 ```json
 { "members": [ { "name": "Priya Raman", "email": "priya@example.com" } ] }
