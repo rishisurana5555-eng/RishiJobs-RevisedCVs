@@ -152,7 +152,7 @@ Turn sending off entirely with `SEND_EMAIL=0` - useful while testing, so repeate
 
 ## The expected-salary rule
 
-If the expected salary is more than **30%** above the current salary, the CV prints **"As per industry norms"** rather than the number. Both figures have to be readable for the rule to fire - if either is blank or non-numeric, whatever was typed is shown as-is.
+The CV prints **"As per industry norms"** instead of the expected salary when it is **left blank**, or when it is more than **30%** above the current salary. A recruiter who does not fill it in is declining to name a figure, which is the same thing the 30% rule says. Both figures have to be readable for the rule to fire - if either is blank or non-numeric, whatever was typed is shown as-is.
 
 Both salary fields are **in LPA** and accept digits only, with an optional decimal point - `18`, `18.5`, `24`. Anything else (`18,00,000`, `₹18L`, `eighteen`) is rejected by the form *and* by the API, so a stray value cannot slip through a direct API call. The CV prints them as `18 LPA`.
 
@@ -172,6 +172,12 @@ Deleting text leaves a hole exactly where it was, and a PDF does not reflow to c
 
 The same runs give page breaks somewhere sensible to land - a break falls between runs rather than through a line of text, and a run that would only just overflow is moved to the next page whole.
 
+The **recruiter note is required**, and its first letter is capitalised automatically.
+
+### Icons
+
+A CV header usually pairs each contact detail with a small icon. Deleting the text on its own leaves a row of orphaned envelope and LinkedIn glyphs, so small images and vector marks sitting beside removed contact text go with it. That runs as a second pass, the only one allowed to touch artwork, and it blanks the icon's pixels rather than deleting a whole image - an icon that is part of a larger sprite does not take the sprite with it.
+
 ### Headings
 
 A bare **"Contact"**, "Contact Details", "Personal Details" or "Address" heading is removed as well. Once the details under it are gone the heading points at nothing. It has to be the whole line, so a heading goes while "Please contact me for references" or "Contact Centre modernisation" stays.
@@ -185,6 +191,8 @@ A line that looks like a postal address, or carries a PIN/postcode/ZIP, is remov
 To strip every location everywhere instead, set `REDACT_LOCATIONS_EVERYWHERE = True` in `cv_processor.py`. Widen or narrow the header block with `HEADER_REGION_RATIO`.
 
 ### Phones
+
+Address words fall in two tiers. "Flat", "Plot No" and "Pincode" only ever appear in an address, so they count on their own. "Road", "Street", "Tower" and the like also turn up in ordinary CV prose, so they only count when a number sits beside them or the line has already proved it is an address. Words like **"building", "house", "cross", "court" and "plot"** are in neither list - "hands-on experience **building** scalable systems", "**in-house** team", "**cross**-functional" are all normal CV language, and a number nearby is not rare enough to save them. Pieces longer than five words are ignored: an address is written in short pieces, a sentence is not.
 
 Phone matching only accepts 9-15 digits, which keeps date ranges (`2012 - 2016`), money (`$420M`), Indian-format figures (`12,00,00,000`), postcodes and employee IDs out of the net. Labels like `Mobile:` or `Tel` immediately before a number are removed along with it, as are the separators around a hit, so a redacted contact line doesn't end up as a row of orphaned bullets.
 

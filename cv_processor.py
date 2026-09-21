@@ -209,13 +209,32 @@ REDACT_CITY_AND_AREA = False
 #:
 #: Note "nagar", "colony", "layout" and the like are absent: those name an
 #: area, not a street, so they stay on the CV.
-BUILDING_STREET_RE = re.compile(
-    r"\b(?:flats?|apt|apartments?|house|h\.?\s*no|door|plots?|survey\s*no|floor"
-    r"|towers?|block|bldg|buildings?|villas?|premises|residency|society"
-    r"|streets?|st|roads?|rd|lanes?|ln|avenues?|ave|marg|cross|gali|galli"
-    r"|nivas|bhavan|chambers?|court|manor|heights|enclave\s*no)\b",
+#: Words that only ever turn up in an address. A piece carrying one of these
+#: is treated as part of the building without further evidence.
+ADDRESS_STRONG_RE = re.compile(
+    r"\b(?:flats?|apt|apartments?|h\.?\s*no\.?|house\s*no\.?|door\s*no\.?"
+    r"|plot\s*no\.?|survey\s*no\.?|khasra|pin\s*code|pincode|p\.?o\.?\s*box"
+    r"|post\s*box)\b",
     re.IGNORECASE,
 )
+
+#: Words that name a street or a building but also occur in ordinary CV prose,
+#: so they only count when a number sits beside them: "12 Oakwood Road" is an
+#: address, "experience building scalable systems" is not.
+#:
+#: "building", "house", "cross", "court" and "plot" are deliberately absent
+#: even from this list - "hands-on experience building...", "in-house team",
+#: "cross-functional", "plot the roadmap" are all normal CV language, and a
+#: number nearby is not rare enough to save them.
+ADDRESS_WEAK_RE = re.compile(
+    r"\b(?:streets?|st|roads?|rd|lanes?|ln|avenues?|ave|marg|gali|galli"
+    r"|towers?|villas?|residency|society|bldg|block|floor|nivas|bhavan)\b",
+    re.IGNORECASE,
+)
+
+#: An address is written in short pieces. Anything longer is a sentence.
+ADDRESS_MAX_WORDS_PER_PIECE = 5
+ADDRESS_MAX_WORDS_PER_LINE = 14
 
 #: A bare door or flat number standing as its own comma-separated piece.
 DOOR_NUMBER_RE = re.compile(r"^[#no.\s-]*\d+\s*[A-Za-z]?(?:[-/]\s*\d+\s*[A-Za-z]?)?$", re.IGNORECASE)
@@ -437,6 +456,57 @@ def _rects_for_span(
     return [merged]
 
 
+#: A year, or a range of them. Identical in shape to a door number, and far
+#: more common on a CV: "2021", "2021 - 2023".
+YEAR_RE = re.compile(r"^(?:19|20)\d{2}(?:\s*[-–—/]\s*(?:(?:19|20)\d{2}|present))?$", re.IGNORECASE)
+
+
+def _is_door_number(piece: str) -> bool:
+    """A bare flat or door number - but not a year, which looks identical."""
+    stripped = piece.strip()
+    if YEAR_RE.match(stripped):
+        return False
+    return bool(DOOR_NUMBER_RE.match(stripped))
+
+
+def _has_address_context(text: str) -> bool:
+    """
+    Whether the line proves it is an address, independent of street words.
+
+    A door number, an unmistakable address word or a postcode is enough. Once
+    one is present, "Prestige Towers" or "MG Road" elsewhere on the line can
+    be taken at face value without a number beside it.
+    """
+    if re.search(r"\b\d{6}\b", text) or UK_POSTCODE_RE.search(text):
+        return True
+    return any(
+        _is_door_number(piece.strip()) or ADDRESS_STRONG_RE.search(piece)
+        for piece in text.split(",")
+    )
+
+
+def _is_address_piece(piece: str, context: bool = False) -> bool:
+    """
+    Whether one comma-separated piece names a building or a street.
+
+    Prose is the thing to keep out. A professional summary sitting in the top
+    quarter of page 1 is in scope for this check, so "hands-on experience
+    building scalable systems" must not read as an address - which is why a
+    street word on its own is never enough, and why long pieces are ignored.
+    """
+    if not piece:
+        return False
+    if _is_door_number(piece):
+        return True
+    if len(piece.split()) > ADDRESS_MAX_WORDS_PER_PIECE:
+        return False
+    if ADDRESS_STRONG_RE.search(piece):
+        return True
+    if not ADDRESS_WEAK_RE.search(piece):
+        return False
+    return context or bool(re.search(r"\d", piece))
+
+
 def _location_spans(text: str, protect: str) -> list[tuple[int, int, str]]:
     """
     The parts of a location line that identify where the candidate lives.
@@ -457,27 +527,35 @@ def _location_spans(text: str, protect: str) -> list[tuple[int, int, str]]:
     if "," in text:
         # Addresses are written in comma-separated pieces. Drop the pieces that
         # name a building or a street; keep the rest of the line.
+        context = _has_address_context(text)
         cursor = 0
         for piece in text.split(","):
             start, end = cursor, cursor + len(piece)
             cursor = end + 1
-            stripped = piece.strip()
-            if not stripped:
+            if not _is_address_piece(piece.strip(), context):
                 continue
-            if BUILDING_STREET_RE.search(stripped) or DOOR_NUMBER_RE.match(stripped):
-                spans.append(
-                    (
-                        start + (len(piece) - len(piece.lstrip())),
-                        end - (len(piece) - len(piece.rstrip())),
-                        "location",
-                    )
+            spans.append(
+                (
+                    start + (len(piece) - len(piece.lstrip())),
+                    end - (len(piece) - len(piece.rstrip())),
+                    "location",
                 )
-    else:
-        # No commas to work with: cut from the start of the line through the
-        # last street word, which leaves the area and city that follow it.
-        matches = list(BUILDING_STREET_RE.finditer(text))
+            )
+    elif (
+        len(text.split()) <= ADDRESS_MAX_WORDS_PER_LINE
+        and (ADDRESS_STRONG_RE.search(text) or _is_door_number(text.split(" ")[0]))
+    ):
+        # No commas to separate the address from the rest of the line, so only
+        # an unmistakable address word will do - a street word plus a number
+        # would also match "led the trading floor redesign in 2021".
+        #
+        # Cut from the start through the last street word, which leaves the
+        # area and city that follow it.
+        matches = list(ADDRESS_STRONG_RE.finditer(text)) + list(
+            ADDRESS_WEAK_RE.finditer(text)
+        )
         if matches:
-            spans.append((0, matches[-1].end(), "location"))
+            spans.append((0, max(m.end() for m in matches), "location"))
 
     if REDACT_CITY_AND_AREA:
         spans += [(m.start(), m.end(), "location") for m in PLACE_RE.finditer(text)]
@@ -495,6 +573,75 @@ def _protected_spans(text: str, protect: str) -> list[tuple[int, int]]:
         for match in re.finditer(rf"\b{re.escape(part)}\b", text, re.IGNORECASE):
             spans.append(match.span())
     return spans
+
+
+#: Largest thing treated as a contact icon, and how far from the text it may
+#: sit. Sized for a glyph beside a line of text, not a photograph.
+ICON_MAX_SIZE = 30.0
+ICON_MAX_DISTANCE = 26.0
+
+
+def _icon_redact_options() -> dict:
+    """
+    How the icon pass is allowed to treat artwork.
+
+    Blanks the icon's pixels rather than deleting the whole image, so an icon
+    that happens to be part of a larger sprite does not take the sprite with
+    it, and removes vector art only when a redaction box covers it entirely.
+    """
+    options: dict = {
+        "images": getattr(
+            pymupdf, "PDF_REDACT_IMAGE_PIXELS", pymupdf.PDF_REDACT_IMAGE_REMOVE
+        )
+    }
+    graphics = getattr(pymupdf, "PDF_REDACT_LINE_ART_REMOVE_IF_COVERED", None)
+    if graphics is not None:
+        options["graphics"] = graphics
+    return options
+
+
+_ICON_REDACT_OPTIONS = _icon_redact_options()
+
+
+def _contact_icons(page: pymupdf.Page, targets: list[pymupdf.Rect]) -> list[pymupdf.Rect]:
+    """
+    Small images and vector marks sitting right beside redacted contact text.
+
+    A CV header usually pairs each detail with an icon. Deleting the text on
+    its own leaves a row of orphaned envelope and LinkedIn glyphs, which both
+    looks wrong and still says how to reach the candidate.
+    """
+    if not targets:
+        return []
+
+    candidates: list[pymupdf.Rect] = []
+    try:
+        for image in page.get_images(full=True):
+            candidates.extend(page.get_image_rects(image[0]))
+    except Exception:  # image geometry is best-effort only
+        pass
+    for drawing in page.get_drawings():
+        rect = drawing.get("rect")
+        if rect:
+            candidates.append(rect)
+
+    found: list[pymupdf.Rect] = []
+    for rect in candidates:
+        if rect.width > ICON_MAX_SIZE or rect.height > ICON_MAX_SIZE:
+            continue
+        if rect.width <= 0 or rect.height <= 0:
+            continue
+        middle = (rect.y0 + rect.y1) / 2
+        for target in targets:
+            # On the same line as the removed text, and close enough alongside
+            # it to be its icon rather than a neighbouring piece of design.
+            if not (target.y0 - 3 <= middle <= target.y1 + 3):
+                continue
+            gap = max(rect.x0 - target.x1, target.x0 - rect.x1)
+            if gap <= ICON_MAX_DISTANCE:
+                found.append(pymupdf.Rect(rect) + (-1, -1, 1, 1))
+                break
+    return found
 
 
 def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> RedactionReport:
@@ -552,13 +699,25 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
                 wide_start, wide_end = _widen(text, start, end)
                 targets.extend(_rects_for_span(spans, wide_start, wide_end))
 
+        icons = _contact_icons(page, targets)
+
         for rect in targets:
             # Filled with the surrounding paper colour rather than black bars,
             # so the redaction disappears into the CV's own design.
             page.add_redact_annot(rect, fill=_rect_background(snapshot, rect, page_bg))
 
         if targets:
+            # Text only on this pass: a redaction box that happens to graze a
+            # photograph must not damage it.
             page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+
+        # The little LinkedIn or GitHub glyph beside a link survives the text
+        # being deleted, leaving an icon pointing at nothing, so it goes in a
+        # second pass - the only one allowed to touch artwork.
+        if icons:
+            for rect in icons:
+                page.add_redact_annot(rect, fill=_rect_background(snapshot, rect, page_bg))
+            page.apply_redactions(**_ICON_REDACT_OPTIONS)
 
         # Hyperlinks survive text redaction - a mailto: or LinkedIn href would
         # otherwise still be sitting in the file.
@@ -815,6 +974,12 @@ class CvDetails:
                 )
             salaries[key] = raw
 
+        note = str(payload.get("recruiter_note", "")).strip()
+        if not note:
+            errors.append("A recruiter note is required.")
+        elif note[0].islower():
+            note = note[0].upper() + note[1:]
+
         if errors:
             raise ValueError(errors)
         return cls(
@@ -822,13 +987,21 @@ class CvDetails:
             current_salary=salaries["current_salary"],
             expected_salary=salaries["expected_salary"],
             notice_period=str(payload.get("notice_period", "")).strip(),
-            recruiter_note=str(payload.get("recruiter_note", "")).strip(),
+            recruiter_note=note,
         )
 
     @property
     def expected_salary_display(self) -> str:
-        """The expected salary as it should appear on the branded CV."""
-        if is_above_norm(self.current_salary, self.expected_salary):
+        """
+        The expected salary as it should appear on the branded CV.
+
+        Left blank reads as "As per industry norms" as well: a recruiter who
+        does not fill it in is declining to name a figure, which is the same
+        thing the 30% rule is saying.
+        """
+        if not self.expected_salary or is_above_norm(
+            self.current_salary, self.expected_salary
+        ):
             return SALARY_AS_PER_NORMS
         return format_salary(self.expected_salary)
 

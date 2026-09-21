@@ -126,8 +126,8 @@ current_salary = col1.text_input("Current salary (LPA)", placeholder="e.g. 18 or
 expected_salary = col2.text_input("Expected salary (LPA)", placeholder="e.g. 24")
 st.caption(
     "Salaries are in LPA - digits only, decimals allowed (18, 18.5). "
-    "If the expected salary is more than 30% above the current one, the CV shows "
-    "“As per industry norms” instead of the figure."
+    "The CV shows “As per industry norms” instead of the figure when the expected "
+    "salary is left blank, or is more than 30% above the current one."
 )
 
 col3, col4 = st.columns(2)
@@ -139,7 +139,7 @@ notice_other = col4.text_input(
 )
 
 recruiter_note = st.text_area(
-    "Recruiter note",
+    "Recruiter note *",
     placeholder="Why this candidate fits - availability, strengths, anything the client should know.",
     height=120,
 )
@@ -167,6 +167,8 @@ if submitted:
         st.error("Please enter the candidate's name - it could not be read from the CV.")
     elif notice_choice == "Other" and not notice_other.strip():
         st.error("Please specify the notice period.")
+    elif not recruiter_note.strip():
+        st.error("Please write a recruiter note - it appears on the CV and in the email.")
     elif salary_problems:
         for problem in salary_problems:
             st.error(problem)
