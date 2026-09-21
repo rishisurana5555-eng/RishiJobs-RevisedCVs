@@ -17,17 +17,40 @@ The candidate's **name is kept** and is read off the CV automatically to pre-fil
 
 ## Running it
 
-Two processes, same as the contract generator: a Flask API that does the work and a Streamlit UI on top.
-
 ```bash
 pip install -r requirements.txt
+python -m streamlit run app.py     # http://localhost:8501
 ```
 
-Then either double-click **`run.bat`**, or run the two halves yourself in separate terminals:
+Or just double-click **`run.bat`**.
 
-```bash
-python api.py                  # http://127.0.0.1:5001
-python -m streamlit run app.py # http://localhost:8501
+The Streamlit app calls the processing code directly, so that is the only process you need. `api.py` exposes the same thing as an HTTP API for scripts or another front end - start it with `run-api.bat` if you want it.
+
+---
+
+## Deploying to Streamlit Community Cloud
+
+1. Push to GitHub (this repo).
+2. At [share.streamlit.io](https://share.streamlit.io), **New app** → pick this repo, branch `main`, main file `app.py`.
+3. Open **Advanced settings → Secrets** and paste:
+
+   ```toml
+   SMTP_HOST = "smtp.gmail.com"
+   SMTP_PORT = "587"
+   SMTP_USER = "rishisurana5555@gmail.com"
+   SMTP_PASSWORD = "your16charapppassword"
+   ```
+
+   These are the same values as `.env`, in TOML form. The app copies them into the environment at startup.
+4. Deploy.
+5. **Settings → Sharing → set the app to private**, then invite each team member by their Google address. Without this the URL is public, and anyone who finds it can process CVs and email your heads.
+
+`packages.txt` installs DejaVu fonts: the deploy runs on Linux, where Arial does not exist, and without a Unicode font the ₹ sign falls back to `?`.
+
+To add team members on the deployed app, either edit `team.json` and push, or add a `TEAM_MEMBERS` secret:
+
+```toml
+TEAM_MEMBERS = "Rishi Surana <rishisurana5555@gmail.com>; Shubham Tyagi <shubhamtyagi.rj@gmail.com>"
 ```
 
 ---
@@ -37,8 +60,8 @@ python -m streamlit run app.py # http://localhost:8501
 | File | What it does |
 |---|---|
 | `cv_processor.py` | All the PDF work - redaction, details box, logo, watermark |
-| `api.py` | Flask API wrapping the processor |
-| `app.py` | Streamlit form and download button |
+| `app.py` | Streamlit front end - the app itself |
+| `api.py` | Optional: the same processing as an HTTP API |
 | `mailer.py` | Sends the finished CV by email |
 | `team.json` | The team members who use the tool |
 | `templates/logo.png` | The Rishi Jobs logo |

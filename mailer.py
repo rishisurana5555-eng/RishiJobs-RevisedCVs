@@ -223,6 +223,35 @@ def send_cv(
     return True, f"Sent to {', '.join(to_addresses)}."
 
 
+def deliver(pdf_bytes: bytes, filename: str, details, report, member: dict | None = None):
+    """
+    Email a finished CV, unless it could not actually be redacted.
+
+    A scanned CV still carries the candidate's contact details, so it is never
+    sent automatically - that would be the one case where the tool leaks the
+    very thing it exists to remove.
+
+    Shared by the API and the Streamlit app so both behave identically.
+    """
+    if report.looks_scanned:
+        return False, (
+            "Not sent: this CV has no text layer, so nothing could be redacted. "
+            "Check it by hand and send it yourself."
+        )
+
+    warnings = []
+    if report.pages_without_text:
+        pages = ", ".join(str(page) for page in report.pages_without_text)
+        warnings.append(f"No text found on page(s) {pages} - check those by hand.")
+    if report.note_truncated:
+        warnings.append("The recruiter note was shortened to fit the box.")
+
+    try:
+        return send_cv(pdf_bytes, filename, details, report.summary_lines(), warnings, member)
+    except Exception as exc:  # never let the mail path break the download
+        return False, f"Could not send the email: {exc}"
+
+
 if __name__ == "__main__":
     # python mailer.py - checks the settings and sends one test email.
     from cv_processor import CvDetails

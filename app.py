@@ -1,19 +1,34 @@
 """
 Rishi Jobs - CV editing tool (Streamlit front end)
 
-Collects the CV and the recruiter's details, sends them to the Flask API and
-offers the edited, redacted PDF for download.
+Collects the CV and the recruiter's details, edits the PDF and offers it for
+download, emailing a copy to the heads.
 
-Run:  streamlit run app.py      (the Flask API must be running: python api.py)
+Runs on its own - it calls the processing code directly rather than going over
+HTTP, so it works as a single process on Streamlit Community Cloud. api.py is
+still there for anything that wants the same thing as an HTTP API.
+
+Run:  streamlit run app.py
 """
 
 import os
 import re
 
-import requests
 import streamlit as st
 
-API_URL = os.environ.get("CV_API_URL", "http://127.0.0.1:5001")
+# Streamlit Cloud supplies configuration through st.secrets rather than a .env
+# file. Copied into the environment before mailer reads it, and with
+# setdefault so a real environment variable still wins.
+try:
+    for _key, _value in st.secrets.items():
+        if isinstance(_value, str):
+            os.environ.setdefault(_key, _value)
+except Exception:  # no secrets configured - .env or plain env vars are used
+    pass
+
+import cv_processor  # noqa: E402  (must follow the secrets bridge)
+import mailer  # noqa: E402
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_PATH = os.path.join(BASE_DIR, "templates", "logo.png")
 
@@ -30,14 +45,6 @@ NOTICE_PERIODS = [
     "3 months",
     "Other",
 ]
-
-CATEGORY_LABELS = {
-    "email": "Email addresses",
-    "phone": "Phone numbers",
-    "url": "LinkedIn / web profiles",
-    "location": "Address / location",
-    "heading": "Contact headings",
-}
 
 st.set_page_config(page_title="Rishi Jobs | CV Editor", page_icon="📄", layout="centered")
 
@@ -70,69 +77,23 @@ target.markdown(
 )
 
 
-def api_available() -> bool:
-    try:
-        return requests.get(f"{API_URL}/api/health", timeout=3).ok
-    except requests.RequestException:
-        return False
-
-
-if not api_available():
-    st.error(
-        f"Cannot reach the processing API at {API_URL}. "
-        "Start it in a second terminal with:  python api.py"
-    )
-    st.stop()
-
-
-def team_members() -> list[str]:
-    """
-    Names of the people who may send CVs, from the API's team list.
-
-    Deliberately uncached: it is a cheap local call, and caching it meant an
-    edit to team.json took a minute to show up in the picker.
-    """
-    try:
-        response = requests.get(f"{API_URL}/api/team", timeout=5)
-        if response.ok:
-            return [m["name"] for m in response.json().get("members", []) if m.get("name")]
-    except requests.RequestException:
-        pass
-    return []
-
-
-def detect_name(file_bytes: bytes, filename: str) -> str:
-    """Ask the API for the candidate's name, so the form can pre-fill it."""
-    try:
-        response = requests.post(
-            f"{API_URL}/api/cv/detect-name",
-            files={"cv_file": (filename, file_bytes, "application/pdf")},
-            timeout=30,
-        )
-        if response.ok:
-            return response.json().get("candidate_name", "")
-    except requests.RequestException:
-        pass
-    return ""
-
-
-members = team_members()
+members = [m["name"] for m in mailer.team_members() if m.get("name")]
 if members:
-    sender = st.selectbox(
+    editor = st.selectbox(
         "Edited by *",
         ["— select —"] + members,
-        key="sender_name",
+        key="editor_name",
         help=(
             "Who is editing this CV. The email always goes out from the Rishi Jobs "
             "account - your name is recorded in it, and replies come back to you."
         ),
     )
-    sender = "" if sender == "— select —" else sender
+    editor = "" if editor == "— select —" else editor
 else:
-    sender = ""
+    editor = ""
     st.warning(
-        "No team members are configured, so the email will not say who sent it. "
-        "Add them to team.json and restart the API."
+        "No team members are configured, so the email will not say who edited the CV. "
+        "Add them to team.json, or set TEAM_MEMBERS in the app's secrets."
     )
 
 st.divider()
@@ -147,7 +108,12 @@ if cv_file is not None:
     fingerprint = f"{cv_file.name}:{cv_file.size}"
     if st.session_state.get("detected_for") != fingerprint:
         st.session_state["detected_for"] = fingerprint
-        st.session_state["candidate_name"] = detect_name(cv_file.getvalue(), cv_file.name)
+        try:
+            st.session_state["candidate_name"] = cv_processor.guess_candidate_name(
+                cv_file.getvalue()
+            )
+        except Exception:
+            st.session_state["candidate_name"] = ""
 
 candidate_name = st.text_input(
     "Candidate name *",
@@ -193,7 +159,7 @@ if submitted:
         if value and not SALARY_RE.fullmatch(value)
     ]
 
-    if members and not sender:
+    if members and not editor:
         st.error("Please select who is editing this CV.")
     elif not cv_file:
         st.error("Please upload the candidate's CV.")
@@ -205,53 +171,49 @@ if submitted:
         for problem in salary_problems:
             st.error(problem)
     else:
-        files = {"cv_file": (cv_file.name, cv_file.getvalue(), "application/pdf")}
-
-        data = {
-            "candidate_name": candidate_name.strip(),
-            "current_salary": current_salary.strip(),
-            "expected_salary": expected_salary.strip(),
-            "notice_period": notice_period,
-            "recruiter_note": recruiter_note.strip(),
-            "sender_name": sender,
-        }
-
-        with st.spinner("Editing the CV…"):
-            try:
-                # The preview call reports what was found, so the recruiter can
-                # check the redaction before sending the CV to a client.
-                summary = requests.post(
-                    f"{API_URL}/api/cv/preview", files=files, data=data, timeout=120
-                )
-                response = requests.post(
-                    f"{API_URL}/api/cv/process", files=files, data=data, timeout=120
-                )
-            except requests.RequestException as exc:
-                st.error(f"Could not reach the API: {exc}")
-                st.stop()
-
-        if not response.ok:
-            try:
-                problems = response.json().get("errors", [response.text])
-            except ValueError:
-                problems = [response.text]
-            for problem in problems:
+        try:
+            details = cv_processor.CvDetails.from_dict(
+                {
+                    "candidate_name": candidate_name.strip(),
+                    "current_salary": current_salary.strip(),
+                    "expected_salary": expected_salary.strip(),
+                    "notice_period": notice_period,
+                    "recruiter_note": recruiter_note.strip(),
+                }
+            )
+        except ValueError as exc:
+            for problem in exc.args[0]:
                 st.error(problem)
             st.stop()
 
-        report = summary.json() if summary.ok else {}
+        with st.spinner("Editing the CV…"):
+            try:
+                output, report = cv_processor.generate_branded_cv(
+                    cv_file.getvalue(), details
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+                st.stop()
+            except Exception as exc:
+                st.error(f"Could not process the CV: {exc}")
+                st.stop()
 
-        if report.get("looks_scanned"):
+            filename = cv_processor.cv_filename(details)
+            sent, mail_message = mailer.deliver(
+                output, filename, details, report, mailer.find_member(editor)
+            )
+
+        if report.looks_scanned:
             st.error(
                 "This CV has no readable text layer - it looks like a scan or a set of "
                 "images. **Nothing could be redacted**, so the contact details are still "
                 "on the page. Check it by hand before sending it out."
             )
-        elif report.get("pages_without_text"):
-            pages = ", ".join(str(p) for p in report["pages_without_text"])
+        elif report.pages_without_text:
+            pages = ", ".join(str(p) for p in report.pages_without_text)
             st.warning(f"No text found on page(s) {pages} - check those by hand.")
 
-        if report.get("note_truncated"):
+        if report.note_truncated:
             st.warning(
                 "The recruiter note was too long for the box and has been shortened on "
                 "the CV. Trim it and regenerate if the full text matters."
@@ -259,19 +221,17 @@ if submitted:
 
         st.success("Done. Review the details below, then download.")
 
-        if response.headers.get("X-Email-Sent") == "1":
-            st.info(f"📧 {response.headers.get('X-Email-Message', 'Emailed.')}")
+        if sent:
+            st.info(f"📧 {mail_message}")
         else:
-            st.warning(
-                "Not emailed - " + response.headers.get("X-Email-Message", "unknown reason")
-            )
+            st.warning(f"Not emailed - {mail_message}")
 
-        removed = report.get("removed") or {}
-        if removed:
+        if report.total:
             st.markdown("**Removed from the CV**")
-            for category, items in removed.items():
+            for category, items in report.removed.items():
+                label = cv_processor.CATEGORY_LABELS.get(category, category)
                 for item in items:
-                    st.markdown(f"- {CATEGORY_LABELS.get(category, category)}: `{item}`")
+                    st.markdown(f"- {label}: `{item}`")
         else:
             st.warning(
                 "No contact details were found to remove. If the CV does show an email "
@@ -280,8 +240,7 @@ if submitted:
 
         st.download_button(
             "Download edited CV",
-            data=response.content,
-            file_name=report.get("filename")
-            or f"{candidate_name.strip().replace(' ', '_')}_RishiJobs.pdf",
+            data=output,
+            file_name=filename,
             mime="application/pdf",
         )

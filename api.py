@@ -60,36 +60,6 @@ def _read_request() -> tuple[bytes, CvDetails]:
     return pdf_bytes, details
 
 
-def _deliver(output: bytes, filename: str, details, report, member) -> tuple[bool, str]:
-    """
-    Email the finished CV, unless it could not actually be redacted.
-
-    A scanned CV still carries the candidate's contact details, so it is never
-    sent automatically - that would be the one case where the tool leaks the
-    very thing it exists to remove.
-    """
-    if report.looks_scanned:
-        return False, (
-            "Not sent: this CV has no text layer, so nothing could be redacted. "
-            "Check it by hand and send it yourself."
-        )
-
-    warnings = []
-    if report.pages_without_text:
-        pages = ", ".join(str(page) for page in report.pages_without_text)
-        warnings.append(f"No text found on page(s) {pages} - check those by hand.")
-    if report.note_truncated:
-        warnings.append("The recruiter note was shortened to fit the box.")
-
-    try:
-        return mailer.send_cv(
-            output, filename, details, report.summary_lines(), warnings, member
-        )
-    except Exception as exc:  # never let the mail path break the download
-        app.logger.exception("Emailing the CV failed")
-        return False, f"Could not send the email: {exc}"
-
-
 @app.get("/api/team")
 def team():
     """The team members who may send CVs, for the front end's picker."""
@@ -143,7 +113,7 @@ def process_cv():
         return jsonify(errors=[f"'{sender_name}' is not in the team list."]), 422
 
     filename = cv_filename(details)
-    sent, mail_message = _deliver(output, filename, details, report, member)
+    sent, mail_message = mailer.deliver(output, filename, details, report, member)
 
     response = send_file(
         io.BytesIO(output),
