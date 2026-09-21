@@ -9,7 +9,7 @@ in the repository:
     SMTP_USER       the mailbox doing the sending
     SMTP_PASSWORD   an app password, not the account password
     MAIL_FROM       defaults to SMTP_USER
-    MAIL_TO         comma-separated; defaults to CV_RECIPIENTS below
+    MAIL_TO         fallback recipients when no editor is known, comma-separated
     TEAM_MEMBERS    overrides team.json ("Name <address>; Name <address>")
     SEND_EMAIL      set to 0 to turn sending off entirely
 
@@ -37,18 +37,15 @@ try:
 except ImportError:  # env vars set by hand still work
     pass
 
-#: The fixed heads who receive every revised CV. MAIL_TO overrides the list;
-#: separate several addresses with commas. They go on one To: line so the
-#: heads can see each other and reply-all.
-#:
-CV_RECIPIENTS = [
+#: Only used when no team member was identified - normally the revised CV
+#: goes to whoever edited it. MAIL_TO overrides this, comma-separated.
+FALLBACK_RECIPIENTS = [
     "rishisurana5555@gmail.com",  # Rishi Surana
     "shubhamtyagi.rj@gmail.com",  # Shubham Tyagi
 ]
 
-#: Deliberately small. Every revised CV carries a candidate's details, so the
-#: distribution list stays at the handful of heads who need it - anything
-#: longer is a sign the list has drifted.
+#: Deliberately small. Every revised CV carries a candidate's details, so even
+#: the fallback list stays at a handful of people.
 MAX_RECIPIENTS = 4
 
 DEFAULT_HOST = "smtp.gmail.com"
@@ -57,8 +54,7 @@ DEFAULT_PORT = 587
 TEAM_FILE = os.path.join(BASE_DIR, "team.json")
 
 #: Every email leaves from the one shared mailbox, so the From line names the
-#: tool rather than a person. Who edited the CV is a separate fact, carried in
-#: the body and in Reply-To.
+#: tool rather than a person. Who edited the CV is recorded in the body.
 FROM_DISPLAY = "Rishi Jobs CV Tool"
 
 
@@ -97,10 +93,21 @@ def find_member(name: str) -> dict | None:
     return None
 
 
-def recipients() -> list[str]:
+def recipients(member: dict | None = None) -> list[str]:
+    """
+    Who receives the revised CV.
+
+    The person who edited it, and nobody else - a CV goes back to whoever did
+    the work rather than to the whole group. FALLBACK_RECIPIENTS (or MAIL_TO)
+    is only used when no team member was identified, so a CV is never sent
+    into the void.
+    """
+    if member and member.get("email"):
+        return [member["email"]]
+
     configured = os.environ.get("MAIL_TO", "")
     listed = [address.strip() for address in configured.split(",") if address.strip()]
-    chosen = listed or list(CV_RECIPIENTS)
+    chosen = listed or list(FALLBACK_RECIPIENTS)
 
     # Deduplicated case-insensitively, keeping the order they were written in.
     seen: set[str] = set()
@@ -112,9 +119,9 @@ def recipients() -> list[str]:
     return unique[:MAX_RECIPIENTS]
 
 
-def recipient() -> str:
+def recipient(member: dict | None = None) -> str:
     """The recipients as one display string."""
-    return ", ".join(recipients())
+    return ", ".join(recipients(member))
 
 
 def is_enabled() -> bool:
@@ -183,16 +190,13 @@ def send_cv(
     user = os.environ["SMTP_USER"]
     password = os.environ["SMTP_PASSWORD"]
     sender = os.environ.get("MAIL_FROM", user)
-    to_addresses = recipients()
+    to_addresses = recipients(member)
 
     message = EmailMessage()
     message["Subject"] = f"Revised CV - {details.candidate_name}"
-    # Always from the one shared mailbox. The team member named on the form is
-    # whoever *edited* the CV, not whoever sent the mail, so their name goes in
-    # the body - and their address on Reply-To, so a head can reply to them.
+    # Always from the one shared mailbox; the CV goes back to the team member
+    # who edited it, whose name is recorded in the body.
     message["From"] = formataddr((FROM_DISPLAY, sender))
-    if member and member.get("email"):
-        message["Reply-To"] = member["email"]
     message["To"] = ", ".join(to_addresses)
     message.set_content(
         _body(details, filename, summary_lines or [], warnings or [], member)
@@ -256,7 +260,7 @@ if __name__ == "__main__":
     # python mailer.py - checks the settings and sends one test email.
     from cv_processor import CvDetails
 
-    print(f"Recipients: {recipient()}")
+    print(f"Recipients: {recipient()}   (fallback - normally the editor)")
     print(f"Enabled:    {is_enabled()}")
     print(f"Configured: {is_configured()}")
     if is_configured():

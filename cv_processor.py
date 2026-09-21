@@ -127,6 +127,10 @@ SHRINK_TOLERANCE = 0.90
 #: Breathing room between the logo band and the CV content beneath it.
 CONTENT_TOP_GAP = 6.0
 
+#: A leftover strip smaller than this is not worth a page of its own - it is
+#: the bottom margin of the CV, not content.
+BLANK_PAGE_TOLERANCE = 24.0
+
 # ------------------------------------------------------------ redaction ----
 
 # Deliberately anchored on unambiguous contact formats. Anything looser starts
@@ -1021,16 +1025,53 @@ def _details_box_height(size: pymupdf.Rect, details: CvDetails) -> float:
         scratch.close()
 
 
-def _content_scale(size: pymupdf.Rect, content_top: float) -> float:
+def _content_bottom(page: pymupdf.Page) -> float:
+    """
+    How far down the page the CV's content actually reaches.
+
+    Measured rather than assumed, so a half-empty page does not drag a sheet of
+    blank paper along behind it. Full-page fills and images are skipped: a CV
+    printed on cream stock has a background rectangle covering the whole page,
+    which would otherwise make every CV look full to the last millimetre.
+    """
+    page_area = page.rect.width * page.rect.height
+    bottom = page.rect.y0
+
+    for word in page.get_text("words"):
+        bottom = max(bottom, word[3])
+
+    for drawing in page.get_drawings():
+        rect = drawing.get("rect")
+        if rect and rect.width * rect.height < page_area * 0.9:
+            bottom = max(bottom, rect.y1)
+
+    try:
+        for image in page.get_images(full=True):
+            for rect in page.get_image_rects(image[0]):
+                if rect.width * rect.height < page_area * 0.9:
+                    bottom = max(bottom, rect.y1)
+    except Exception:  # image geometry is best-effort only
+        pass
+
+    if bottom <= page.rect.y0 + 1:
+        return page.rect.y1  # nothing measurable - treat the page as full
+    return min(bottom + 2, page.rect.y1)
+
+
+def _content_scale(size: pymupdf.Rect, content_top: float, used: float) -> float:
     """
     How much to scale the CV's own content.
 
-    The CV is only shrunk when that costs almost nothing - a page is otherwise
-    kept at full size and allowed to run onto a second sheet, because shrinking
-    a whole CV to clear the details box leaves the text too small to read.
+    `used` is how far the content actually reaches, so a page with room to
+    spare simply fits. Otherwise the CV is only shrunk when that costs almost
+    nothing - a page is kept at full size and allowed to run onto a second
+    sheet instead, because shrinking a whole CV to clear the details box
+    leaves the text too small to read.
     """
     available = size.height - content_top
-    fit = min(1.0, available / size.height)
+    if used <= available:
+        return 1.0
+    fit = min(1.0, available / used)
     return fit if fit >= SHRINK_TOLERANCE else 1.0
 
 
@@ -1097,16 +1138,20 @@ def generate_branded_cv(
                     else WHITE
                 )
                 first_page = src_page.number == 0
+                # Where the content really ends, so a short CV is not followed
+                # by a sheet carrying nothing but the logo.
+                content_bottom = _content_bottom(src_page)
                 scale = _content_scale(
                     size,
                     box_top + box_height + gap
                     if first_page
                     else HEADER_BAND_HEIGHT + CONTENT_TOP_GAP,
+                    content_bottom - size.y0,
                 )
 
                 cursor = size.y0
                 first_band = True
-                while cursor < size.y1 - 1:
+                while cursor < content_bottom - BLANK_PAGE_TOLERANCE or first_band:
                     page = out.new_page(width=size.width, height=size.height)
                     page.draw_rect(page.rect, color=None, fill=paper)
 
@@ -1120,8 +1165,8 @@ def generate_branded_cv(
 
                     # How much of the source page fits at this scale. Split at a
                     # gap between lines so no row of text is sliced in half.
-                    band_height = min(size.y1 - cursor, available / scale)
-                    if cursor + band_height < size.y1 - 1:
+                    band_height = min(content_bottom - cursor, available / scale)
+                    if cursor + band_height < content_bottom - BLANK_PAGE_TOLERANCE:
                         band_height = _safe_split(src_page, cursor, band_height)
 
                     clip = pymupdf.Rect(size.x0, cursor, size.x1, cursor + band_height)

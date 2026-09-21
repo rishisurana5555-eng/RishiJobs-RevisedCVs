@@ -73,7 +73,7 @@ def health():
         logo_found=os.path.exists(LOGO_PATH),
         email_enabled=mailer.is_enabled(),
         email_configured=mailer.is_configured(),
-        email_recipient=mailer.recipient(),
+        email_recipient=mailer.recipient(mailer.find_member(request.form.get("sender_name", ""))),
     )
 
 
@@ -106,7 +106,7 @@ def process_cv():
         return jsonify(errors=[f"Could not process the CV: {exc}"]), 500
 
     # Looked up server side: the request supplies a name, never an address, so
-    # nobody can put an arbitrary Reply-To on a CV going to the heads.
+    # a CV cannot be emailed to an address of the caller's choosing.
     sender_name = (request.form.get("sender_name") or "").strip()
     member = mailer.find_member(sender_name)
     if sender_name and member is None:
@@ -151,7 +151,7 @@ def preview_cv():
         total=report.total,
         looks_scanned=report.looks_scanned,
         note_truncated=report.note_truncated,
-        email_recipient=mailer.recipient(),
+        email_recipient=mailer.recipient(mailer.find_member(request.form.get("sender_name", ""))),
         email_ready=mailer.is_enabled() and mailer.is_configured(),
         team_size=len(mailer.team_members()),
         pages_without_text=report.pages_without_text,

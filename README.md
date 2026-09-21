@@ -9,7 +9,7 @@ Takes a candidate's CV (PDF) and returns a client-ready version:
 - **Salaries in LPA** - digits only, validated on both the form and the API
 - **Expected salary protected** - a hike of more than 30% shows as "As per industry norms" instead of the figure
 - **The candidate's design is untouched** - the original page is placed whole at full size, never re-typeset or shrunk to fit
-- **Emailed automatically** to rishisurana5555@gmail.com, and downloads as `<Candidate_Name>_RishiJobs.pdf`
+- **Emailed automatically** to whoever edited it, and downloads as `<Candidate_Name>_RishiJobs.pdf`
 
 The candidate's **name is kept** and is read off the CV automatically to pre-fill the form. Their **area, city and state are kept** too - only the building and street go, so a client sees "Koramangala, Bengaluru" but not the door number.
 
@@ -101,14 +101,9 @@ Subject line: `Revised CV - <Candidate Name>`.
 
 ### Who it goes to
 
-`CV_RECIPIENTS` in `mailer.py` holds the heads' addresses:
+**Whoever edited the CV, and nobody else.** If Shubham edits a CV it goes to Shubham; if Rishi edits one it goes to Rishi. The name picked in the "Edited by" box decides it, and the address is looked up server side from `team.json` - a request supplies a name, never an address, so a CV cannot be emailed somewhere of the caller's choosing.
 
-- Rishi Surana - rishisurana5555@gmail.com
-- Shubham Tyagi - shubhamtyagi.rj@gmail.com
-
-Set `MAIL_TO` in `.env` to a comma-separated list to change it without touching code. They all go on one `To:` line so the heads can see each other and reply-all.
-
-The list is **capped at 4 addresses** (`MAX_RECIPIENTS`) and deduplicated. Every revised CV carries a candidate's details, so the distribution list stays at the handful of heads who need it - if it ever grows past four, that is a sign it has drifted rather than a limit to raise casually.
+`FALLBACK_RECIPIENTS` in `mailer.py` is only used when no team member was identified, so a CV is never sent into the void. `MAIL_TO` overrides that fallback, comma-separated, capped at 4 addresses.
 
 ### Who it comes from, and who edited the CV
 
@@ -116,11 +111,10 @@ Every email goes out from **one shared mailbox** (the `SMTP_USER` in `.env` - Ri
 
 - **From** is always `Rishi Jobs CV Tool <rishisurana5555@gmail.com>`
 - the body says `Edited by: Shubham Tyagi (shubhamtyagi.rj@gmail.com)`
-- **Reply-To** is that member's address, so a head hitting reply reaches the person who did the work
 
 Gmail will not let an account send as somebody else's address anyway, so a per-person `From` would need Google OAuth. This upgrades to that later without redoing anything else.
 
-Members live in **`team.json`** - this is the "Edited by" picker, a **separate list** from the heads who receive the CVs. Someone can be on both, as Rishi and Shubham are:
+Members live in **`team.json`** - this is the "Edited by" picker, and it is also what decides where each CV is sent:
 
 ```json
 { "members": [ { "name": "Priya Raman", "email": "priya@example.com" } ] }
@@ -192,6 +186,8 @@ Phone matching only accepts 9-15 digits, which keeps date ranges (`2012 - 2016`)
 ## Page layout
 
 The CV's own content is kept at **full size and never shrunk to make room** for the details box. Where it no longer fits, it continues onto another page instead - a 1-page CV normally comes back as 2 pages. Splits land between lines of text, never through one.
+
+**An extra page is only added when there is content to put on it.** How far down the page the CV actually reaches is measured first, so a short CV that ends half way down stays a single page instead of dragging a blank sheet along behind it. Full-page background fills are ignored in that measurement - a CV printed on cream stock has a rectangle covering the whole page, which would otherwise make every CV look full to the last millimetre.
 
 Pages that carry no details box (page 2 onward) lose only the logo band, so they are scaled by about 7% rather than being split - not enough to notice, and it avoids a 50pt sliver page after every sheet.
 
