@@ -127,6 +127,11 @@ SHRINK_TOLERANCE = 0.90
 #: Breathing room between the logo band and the CV content beneath it.
 CONTENT_TOP_GAP = 6.0
 
+#: A page that continues from the previous one gets a deeper top margin. Its
+#: content starts mid-flow rather than with the CV's own header, so text
+#: running straight into the logo band reads as cramped.
+CONTINUATION_TOP_GAP = 30.0
+
 #: A leftover strip smaller than this is not worth a page of its own - it is
 #: the bottom margin of the CV, not content.
 BLANK_PAGE_TOLERANCE = 24.0
@@ -1156,11 +1161,12 @@ def generate_branded_cv(
                     page.draw_rect(page.rect, color=None, fill=paper)
 
                     with_box = first_page and first_band
-                    content_top = (
-                        box_top + box_height + gap
-                        if with_box
-                        else HEADER_BAND_HEIGHT + CONTENT_TOP_GAP
-                    )
+                    if with_box:
+                        content_top = box_top + box_height + gap
+                    elif first_band:
+                        content_top = HEADER_BAND_HEIGHT + CONTENT_TOP_GAP
+                    else:
+                        content_top = HEADER_BAND_HEIGHT + CONTINUATION_TOP_GAP
                     available = size.height - content_top
 
                     # How much of the source page fits at this scale. Split at a

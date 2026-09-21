@@ -192,6 +192,8 @@ The CV's own content is kept at **full size and never shrunk to make room** for 
 
 **An extra page is only added when there is content to put on it.** How far down the page the CV actually reaches is measured first, so a short CV that ends half way down stays a single page instead of dragging a blank sheet along behind it. Full-page background fills are ignored in that measurement - a CV printed on cream stock has a rectangle covering the whole page, which would otherwise make every CV look full to the last millimetre.
 
+A page that continues from the previous one gets a deeper top margin (`CONTINUATION_TOP_GAP`), since its content starts mid-sentence rather than with the CV's own header and would otherwise run straight into the logo band.
+
 Pages that carry no details box (page 2 onward) lose only the logo band, so they are scaled by about 7% rather than being split - not enough to notice, and it avoids a 50pt sliver page after every sheet.
 
 `SHRINK_TOLERANCE` sets where that choice tips: content is scaled if it would still be at least this fraction of full size, otherwise it keeps full size and runs on.
@@ -221,6 +223,7 @@ Constants at the top of `cv_processor.py`:
 | `DETAILS_MAX_HEIGHT_RATIO` | Ceiling on the details box as a fraction of page height. A long recruiter note shrinks to fit this, and is cut with an ellipsis if it still will not fit - the app warns when that happens. |
 | `SALARY_HIKE_THRESHOLD` | The 30% rule. |
 | `SHRINK_TOLERANCE` | How much shrinking is acceptable before the CV is split onto another page instead. |
+| `CONTINUATION_TOP_GAP` | Top margin on a page that continues from the previous one. |
 | `HEADER_REGION_RATIO` | How much of page 1 counts as the header block for location redaction. |
 | `REDACT_LOCATIONS_EVERYWHERE` | Strip locations from the whole CV, not just the header. |
 
