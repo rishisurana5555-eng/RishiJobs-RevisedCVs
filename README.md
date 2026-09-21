@@ -168,6 +168,10 @@ Matches are removed with PyMuPDF's `apply_redactions()`, which **deletes the gly
 
 Each redaction is filled with the paper colour sampled from just around it, so on a cream or grey CV the gap disappears instead of leaving a bright white patch.
 
+Deleting text leaves a hole exactly where it was, and a PDF does not reflow to close it. So the CV is placed as a series of **content runs** rather than in one piece: any vertical gap wider than `MAX_CONTENT_GAP` (28pt) is squeezed back down to it, which closes the hole a removed contact block leaves behind. Ordinary line and section spacing sits below that threshold and is reproduced exactly, so the CV's own rhythm is untouched.
+
+The same runs give page breaks somewhere sensible to land - a break falls between runs rather than through a line of text, and a run that would only just overflow is moved to the next page whole.
+
 ### Headings
 
 A bare **"Contact"**, "Contact Details", "Personal Details" or "Address" heading is removed as well. Once the details under it are gone the heading points at nothing. It has to be the whole line, so a heading goes while "Please contact me for references" or "Contact Centre modernisation" stays.
@@ -224,6 +228,7 @@ Constants at the top of `cv_processor.py`:
 | `SALARY_HIKE_THRESHOLD` | The 30% rule. |
 | `SHRINK_TOLERANCE` | How much shrinking is acceptable before the CV is split onto another page instead. |
 | `CONTINUATION_TOP_GAP` | Top margin on a page that continues from the previous one. |
+| `MAX_CONTENT_GAP` | Vertical gaps wider than this are squeezed down to it, closing the holes left by redaction. |
 | `HEADER_REGION_RATIO` | How much of page 1 counts as the header block for location redaction. |
 | `REDACT_LOCATIONS_EVERYWHERE` | Strip locations from the whole CV, not just the header. |
 

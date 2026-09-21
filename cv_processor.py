@@ -136,6 +136,14 @@ CONTINUATION_TOP_GAP = 30.0
 #: the bottom margin of the CV, not content.
 BLANK_PAGE_TOLERANCE = 24.0
 
+#: Vertical gaps taller than this are squeezed back down to it.
+#:
+#: Deleting a contact block leaves a hole exactly where the text was, and a
+#: PDF does not reflow to close it, so a revised CV would otherwise carry
+#: obvious empty patches. Sized to sit above normal section spacing (usually
+#: 20-27pt), so the CV's own rhythm is left alone and only the holes shrink.
+MAX_CONTENT_GAP = 28.0
+
 # ------------------------------------------------------------ redaction ----
 
 # Deliberately anchored on unambiguous contact formats. Anything looser starts
@@ -1020,6 +1028,121 @@ def _draw_details_box(
 # -------------------------------------------------------------- pipeline ---
 
 
+def _flow_page(
+    out: pymupdf.Document,
+    src: pymupdf.Document,
+    src_page: pymupdf.Page,
+    paper: tuple[float, float, float],
+    papers: list,
+    is_first: bool,
+    box_bottom: float,
+) -> None:
+    """
+    Lay one source page out across as many output pages as it needs.
+
+    The page is placed as a series of content runs rather than in one piece,
+    which does two things: an oversized gap between runs - the hole left where
+    a contact block used to be - is squeezed back to MAX_CONTENT_GAP, and a
+    page break lands between runs instead of through a line of text.
+    """
+    size = src_page.rect
+    segments = _content_segments(src_page)
+
+    if not segments:
+        # Nothing measurable on the sheet - an image-only page, or a genuinely
+        # blank one. Place it once, whole, rather than splitting empty space.
+        page = out.new_page(width=size.width, height=size.height)
+        page.draw_rect(page.rect, color=None, fill=paper)
+        papers.append(paper)
+        top = box_bottom if is_first else HEADER_BAND_HEIGHT + CONTENT_TOP_GAP
+        plain = min(1.0, (size.y1 - top) / size.height)
+        placed = size.width * plain
+        page.show_pdf_page(
+            pymupdf.Rect(
+                (size.width - placed) / 2,
+                top,
+                (size.width - placed) / 2 + placed,
+                top + size.height * plain,
+            ),
+            src,
+            src_page.number,
+        )
+        return
+
+    gaps = [
+        min(segments[i][0] - segments[i - 1][1], MAX_CONTENT_GAP)
+        for i in range(1, len(segments))
+    ]
+
+    used = sum(end - start for start, end in segments) + sum(gaps)
+    first_top = box_bottom if is_first else HEADER_BAND_HEIGHT + CONTENT_TOP_GAP
+    scale = _content_scale(size, first_top, used)
+
+    width = size.width * scale
+    left = (size.width - width) / 2
+    fresh_top = HEADER_BAND_HEIGHT + CONTINUATION_TOP_GAP
+    fresh_available = size.y1 - fresh_top
+
+    page = None
+    out_y = 0.0
+    started = 0
+
+    def start_page():
+        nonlocal page, out_y, started
+        page = out.new_page(width=size.width, height=size.height)
+        page.draw_rect(page.rect, color=None, fill=paper)
+        papers.append(paper)
+        if started == 0:
+            out_y = first_top
+        else:
+            out_y = fresh_top
+        started += 1
+
+    for index, (segment_start, segment_end) in enumerate(segments):
+        if page is not None and index:
+            # Keep a run whole where it would otherwise be split for the sake
+            # of a few points, but only when it fits on a page of its own.
+            scaled = (segment_end - segment_start) * scale
+            if (
+                out_y + gaps[index - 1] * scale + scaled > size.y1
+                and scaled <= fresh_available
+            ):
+                page = None
+            else:
+                out_y += gaps[index - 1] * scale
+
+        cursor = segment_start
+        remaining = segment_end - cursor
+        while remaining > 0.5:
+            if page is None:
+                start_page()
+
+            available = size.y1 - out_y
+            if available < BLANK_PAGE_TOLERANCE and started > 0:
+                page = None
+                continue
+
+            part = min(remaining, available / scale)
+            if part < remaining - 0.5:
+                part = _safe_split(src_page, cursor, part)
+
+            page.show_pdf_page(
+                pymupdf.Rect(left, out_y, left + width, out_y + part * scale),
+                src,
+                src_page.number,
+                clip=pymupdf.Rect(size.x0, cursor, size.x1, cursor + part),
+            )
+
+            out_y += part * scale
+            cursor += part
+            remaining -= part
+            if remaining > 0.5:
+                page = None  # the rest carries on overleaf
+
+    if page is None and started == 0:
+        start_page()  # an empty source page still gets a sheet
+
+
 def _details_box_height(size: pymupdf.Rect, details: CvDetails) -> float:
     """Height the details box will take, measured on a throwaway page."""
     scratch = pymupdf.open()
@@ -1061,6 +1184,44 @@ def _content_bottom(page: pymupdf.Page) -> float:
     if bottom <= page.rect.y0 + 1:
         return page.rect.y1  # nothing measurable - treat the page as full
     return min(bottom + 2, page.rect.y1)
+
+
+def _content_segments(page: pymupdf.Page) -> list[tuple[float, float]]:
+    """
+    Contiguous runs of content, top to bottom.
+
+    Runs are separated only where the page is empty for more than
+    MAX_CONTENT_GAP, so ordinary line and section spacing stays inside a run
+    and is reproduced exactly. The gaps between runs are the ones worth
+    closing. Full-page background fills are ignored, as in _content_bottom.
+    """
+    page_area = page.rect.width * page.rect.height
+    spans: list[list[float]] = [[word[1], word[3]] for word in page.get_text("words")]
+
+    for drawing in page.get_drawings():
+        rect = drawing.get("rect")
+        if rect and rect.width * rect.height < page_area * 0.9:
+            spans.append([rect.y0, rect.y1])
+
+    try:
+        for image in page.get_images(full=True):
+            for rect in page.get_image_rects(image[0]):
+                if rect.width * rect.height < page_area * 0.9:
+                    spans.append([rect.y0, rect.y1])
+    except Exception:  # image geometry is best-effort only
+        pass
+
+    if not spans:
+        return []
+
+    spans.sort()
+    merged = [spans[0]]
+    for start, end in spans[1:]:
+        if start <= merged[-1][1] + MAX_CONTENT_GAP:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return [(start, end) for start, end in merged]
 
 
 def _content_scale(size: pymupdf.Rect, content_top: float, used: float) -> float:
@@ -1135,70 +1296,33 @@ def generate_branded_cv(
             # box is drawn last so it sits over the watermark cleanly.
             box_height = _details_box_height(src[0].rect, details)
 
+            papers: list[tuple[float, float, float]] = []
             for src_page in src:
-                size = src_page.rect
                 paper = (
                     report.page_backgrounds[src_page.number]
                     if src_page.number < len(report.page_backgrounds)
                     else WHITE
                 )
-                first_page = src_page.number == 0
-                # Where the content really ends, so a short CV is not followed
-                # by a sheet carrying nothing but the logo.
-                content_bottom = _content_bottom(src_page)
-                scale = _content_scale(
-                    size,
-                    box_top + box_height + gap
-                    if first_page
-                    else HEADER_BAND_HEIGHT + CONTENT_TOP_GAP,
-                    content_bottom - size.y0,
+                _flow_page(
+                    out,
+                    src,
+                    src_page,
+                    paper,
+                    papers,
+                    is_first=src_page.number == 0,
+                    box_bottom=box_top + box_height + gap,
                 )
 
-                cursor = size.y0
-                first_band = True
-                while cursor < content_bottom - BLANK_PAGE_TOLERANCE or first_band:
-                    page = out.new_page(width=size.width, height=size.height)
-                    page.draw_rect(page.rect, color=None, fill=paper)
+            # Decoration happens once every page's content is in place: the
+            # watermark sits over the CV, and the details box over both.
+            for index, page in enumerate(out):
+                _draw_watermark(page, faded)
+                if HEADER_BAND_HEIGHT > 0:
+                    _draw_header_band(page, crest, papers[index])
 
-                    with_box = first_page and first_band
-                    if with_box:
-                        content_top = box_top + box_height + gap
-                    elif first_band:
-                        content_top = HEADER_BAND_HEIGHT + CONTENT_TOP_GAP
-                    else:
-                        content_top = HEADER_BAND_HEIGHT + CONTINUATION_TOP_GAP
-                    available = size.height - content_top
-
-                    # How much of the source page fits at this scale. Split at a
-                    # gap between lines so no row of text is sliced in half.
-                    band_height = min(content_bottom - cursor, available / scale)
-                    if cursor + band_height < content_bottom - BLANK_PAGE_TOLERANCE:
-                        band_height = _safe_split(src_page, cursor, band_height)
-
-                    clip = pymupdf.Rect(size.x0, cursor, size.x1, cursor + band_height)
-                    width = size.width * scale
-                    target = pymupdf.Rect(
-                        (size.width - width) / 2,
-                        content_top,
-                        (size.width - width) / 2 + width,
-                        content_top + band_height * scale,
-                    )
-                    page.show_pdf_page(target, src, src_page.number, clip=clip)
-
-                    # Drawn after the CV, not behind it: most CVs paint their own
-                    # opaque background, which would hide an underlay completely.
-                    _draw_watermark(page, faded)
-
-                    if HEADER_BAND_HEIGHT > 0:
-                        _draw_header_band(page, crest, paper)
-
-                    if with_box:
-                        _bottom, report.note_truncated = _draw_details_box(
-                            page, details, Typeface(page), box_top
-                        )
-
-                    cursor += band_height
-                    first_band = False
+            _bottom, report.note_truncated = _draw_details_box(
+                out[0], details, Typeface(out[0]), box_top
+            )
 
             out.set_metadata(
                 {
