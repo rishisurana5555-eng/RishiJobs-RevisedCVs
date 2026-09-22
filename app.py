@@ -1,8 +1,9 @@
 """
 Rishi Jobs - CV editing tool (Streamlit front end)
 
-Collects the CV and the recruiter's details, edits the PDF and offers it for
-download, emailing a copy to the heads.
+Collects the CV and the recruiter's details, edits the PDF and offers the
+revised copy for download. Nothing is emailed or sent anywhere - the edited
+CV exists only in the browser session.
 
 Runs on its own - it calls the processing code directly rather than going over
 HTTP, so it works as a single process on Streamlit Community Cloud. api.py is
@@ -16,18 +17,7 @@ import re
 
 import streamlit as st
 
-# Streamlit Cloud supplies configuration through st.secrets rather than a .env
-# file. Copied into the environment before mailer reads it, and with
-# setdefault so a real environment variable still wins.
-try:
-    for _key, _value in st.secrets.items():
-        if isinstance(_value, str):
-            os.environ.setdefault(_key, _value)
-except Exception:  # no secrets configured - .env or plain env vars are used
-    pass
-
-import cv_processor  # noqa: E402  (must follow the secrets bridge)
-import mailer  # noqa: E402
+import cv_processor
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_PATH = os.path.join(BASE_DIR, "templates", "logo.png")
@@ -40,9 +30,6 @@ NOTICE_PERIODS = [
     "30 days",
     "60 days",
     "90 days",
-    "1 month",
-    "2 months",
-    "3 months",
     "Other",
 ]
 
@@ -75,28 +62,6 @@ target.markdown(
     "<p>Strip the candidate's contact details, add the recruiter box and Rishi Jobs branding.</p></div>",
     unsafe_allow_html=True,
 )
-
-
-members = [m["name"] for m in mailer.team_members() if m.get("name")]
-if members:
-    editor = st.selectbox(
-        "Edited by *",
-        ["— select —"] + members,
-        key="editor_name",
-        help=(
-            "Who is editing this CV. The email always goes out from the Rishi Jobs "
-            "account - your name is recorded in it, and replies come back to you."
-        ),
-    )
-    editor = "" if editor == "— select —" else editor
-else:
-    editor = ""
-    st.warning(
-        "No team members are configured, so the email will not say who edited the CV. "
-        "Add them to team.json, or set TEAM_MEMBERS in the app's secrets."
-    )
-
-st.divider()
 
 # Deliberately not inside st.form: a form only reruns when it is submitted,
 # which left the "If other" box stuck disabled and stopped the candidate name
@@ -159,16 +124,14 @@ if submitted:
         if value and not SALARY_RE.fullmatch(value)
     ]
 
-    if members and not editor:
-        st.error("Please select who is editing this CV.")
-    elif not cv_file:
+    if not cv_file:
         st.error("Please upload the candidate's CV.")
     elif not candidate_name.strip():
         st.error("Please enter the candidate's name - it could not be read from the CV.")
     elif notice_choice == "Other" and not notice_other.strip():
         st.error("Please specify the notice period.")
     elif not recruiter_note.strip():
-        st.error("Please write a recruiter note - it appears on the CV and in the email.")
+        st.error("Please write a recruiter note - it appears on the CV.")
     elif salary_problems:
         for problem in salary_problems:
             st.error(problem)
@@ -201,9 +164,6 @@ if submitted:
                 st.stop()
 
             filename = cv_processor.cv_filename(details)
-            sent, mail_message = mailer.deliver(
-                output, filename, details, report, mailer.find_member(editor)
-            )
 
         if report.looks_scanned:
             st.error(
@@ -223,11 +183,6 @@ if submitted:
 
         st.success("Done. Review the details below, then download.")
 
-        if sent:
-            st.info(f"📧 {mail_message}")
-        else:
-            st.warning(f"Not emailed - {mail_message}")
-
         if report.total:
             st.markdown("**Removed from the CV**")
             for category, items in report.removed.items():
@@ -237,7 +192,7 @@ if submitted:
         else:
             st.warning(
                 "No contact details were found to remove. If the CV does show an email "
-                "or a phone number, check it by hand before sending it."
+                "or a phone number, check it by hand before using it."
             )
 
         st.download_button(

@@ -3,7 +3,7 @@ Rishi Jobs - CV Branding API (Flask)
 
 Endpoints
     GET  /api/health       -> service status
-    POST /api/cv/process   -> CV PDF + recruiter details in, branded PDF out
+    POST /api/cv/process   -> CV PDF + recruiter details in, revised PDF out
     POST /api/cv/preview   -> same, but reports what would be redacted (JSON)
 
 Run:  python api.py   (serves on http://127.0.0.1:5001)
@@ -14,8 +14,6 @@ import io
 import os
 
 from flask import Flask, jsonify, request, send_file
-
-import mailer
 
 from cv_processor import (
     CvDetails,
@@ -60,21 +58,9 @@ def _read_request() -> tuple[bytes, CvDetails]:
     return pdf_bytes, details
 
 
-@app.get("/api/team")
-def team():
-    """The team members who may send CVs, for the front end's picker."""
-    return jsonify(members=mailer.team_members())
-
-
 @app.get("/api/health")
 def health():
-    return jsonify(
-        status="ok",
-        logo_found=os.path.exists(LOGO_PATH),
-        email_enabled=mailer.is_enabled(),
-        email_configured=mailer.is_configured(),
-        email_recipient=mailer.recipient(mailer.find_member(request.form.get("sender_name", ""))),
-    )
+    return jsonify(status="ok", logo_found=os.path.exists(LOGO_PATH))
 
 
 @app.post("/api/cv/detect-name")
@@ -105,15 +91,7 @@ def process_cv():
         app.logger.exception("CV processing failed")
         return jsonify(errors=[f"Could not process the CV: {exc}"]), 500
 
-    # Looked up server side: the request supplies a name, never an address, so
-    # a CV cannot be emailed to an address of the caller's choosing.
-    sender_name = (request.form.get("sender_name") or "").strip()
-    member = mailer.find_member(sender_name)
-    if sender_name and member is None:
-        return jsonify(errors=[f"'{sender_name}' is not in the team list."]), 422
-
     filename = cv_filename(details)
-    sent, mail_message = mailer.deliver(output, filename, details, report, member)
 
     response = send_file(
         io.BytesIO(output),
@@ -125,8 +103,6 @@ def process_cv():
     response.headers["X-Redactions"] = str(report.total)
     response.headers["X-Looks-Scanned"] = "1" if report.looks_scanned else "0"
     response.headers["X-Note-Truncated"] = "1" if report.note_truncated else "0"
-    response.headers["X-Email-Sent"] = "1" if sent else "0"
-    response.headers["X-Email-Message"] = mail_message
     return response
 
 
@@ -151,9 +127,6 @@ def preview_cv():
         total=report.total,
         looks_scanned=report.looks_scanned,
         note_truncated=report.note_truncated,
-        email_recipient=mailer.recipient(mailer.find_member(request.form.get("sender_name", ""))),
-        email_ready=mailer.is_enabled() and mailer.is_configured(),
-        team_size=len(mailer.team_members()),
         pages_without_text=report.pages_without_text,
         page_count=report.page_count,
         filename=cv_filename(details),

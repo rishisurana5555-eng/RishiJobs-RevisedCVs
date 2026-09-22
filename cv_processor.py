@@ -4,7 +4,10 @@ Rishi Jobs - CV branding and redaction.
 Takes a candidate CV (PDF) and returns a branded copy:
 
   * personal contact details (email, phone, LinkedIn/URLs) are truly removed,
-    not covered up - the text is deleted from the page
+    not covered up - the text is deleted from the page, along with the icons
+    that sat beside them
+  * of the candidate's address only the area, city and state survive - the
+    door, street, building and postcode go
   * a details box on the CV itself carries the recruiter's commercial details:
     salary, expected salary and notice period on one row, the note below
   * the logo sits in a header band on every page, with a faint watermark behind
@@ -148,6 +151,18 @@ BLANK_PAGE_TOLERANCE = 24.0
 #: 20-27pt), so the CV's own rhythm is left alone and only the holes shrink.
 MAX_CONTENT_GAP = 28.0
 
+#: A new source page carries on down the sheet already in progress when at
+#: least this much of it is still free, instead of always starting a fresh one.
+#:
+#: A CV whose first page overruns by a line or two used to leave the rest of
+#: that sheet blank, because the next source page always began a new one. Set
+#: to a page height to go back to one source page per sheet.
+SOURCE_PAGE_MIN_SPACE = 120.0
+
+#: The breathing space left between one source page's content and the next
+#: when the two share a sheet.
+SOURCE_PAGE_GAP = 18.0
+
 # ------------------------------------------------------------ redaction ----
 
 # Deliberately anchored on unambiguous contact formats. Anything looser starts
@@ -176,14 +191,33 @@ PHONE_LABEL_RE = re.compile(
 )
 EMAIL_LABEL_RE = re.compile(r"\b(?:e-?mail|mail)\b[\s.:]*", re.IGNORECASE)
 
+#: What may sit between a contact label and the detail it introduces:
+#: punctuation and short qualifiers, as in "Contact No (M):", "Email : -" or
+#: "Mobile (Work) -". Each qualifier has to end at a non-letter, so a label
+#: followed by ordinary prose ("Contact me at the office for ...") does not
+#: match and the sentence is left alone.
+_LABEL_GAP = r"[\s.:;,#()\[\]<>/|\-–—]"
+LABEL_FILLER_RE = re.compile(
+    rf"{_LABEL_GAP}*"
+    rf"(?:(?:nos?|number|num|id|mob|mobile|cell|phone|tel|off|office|res"
+    rf"|residence|work|home|personal|primary|alt|alternate|[a-z])"
+    rf"(?={_LABEL_GAP}|$){_LABEL_GAP}*)*$",
+    re.IGNORECASE,
+)
+
 #: A section heading that only introduces contact details. Once the details
 #: underneath are gone the heading is left pointing at nothing, so it goes too.
 #: Matched against a whole line, so "Contact" as a heading goes while
 #: "contact" inside a sentence stays.
+#:
+#: "Personal Details" is deliberately absent: that heading also introduces the
+#: date of birth and languages, which stay, so removing it would orphan them.
 CONTACT_HEADING_RE = re.compile(
     r"^[\s|•·\-–—]*"
     r"(?:contact(?:\s*(?:details|info|information|me|us))?"
-    r"|get\s*in\s*touch|reach\s*me|how\s*to\s*reach\s*me)"
+    r"|get\s*in\s*touch|reach\s*me|how\s*to\s*reach\s*me"
+    r"|(?:current|present|permanent|residential|home|postal|mailing)?\s*"
+    r"(?:address|location))"
     r"[\s:|•·\-–—]*$",
     re.IGNORECASE,
 )
@@ -199,18 +233,15 @@ CONTACT_HEADING_RE = re.compile(
 HEADER_REGION_RATIO = 0.25
 REDACT_LOCATIONS_EVERYWHERE = False
 
-#: Off by default: area, city and state stay on the CV. Only the building and
-#: street go. Turn this on to strip place names as well.
+#: Off by default: area, city and state stay on the CV. Everything else on an
+#: address line goes. Turn this on to strip place names as well.
 REDACT_CITY_AND_AREA = False
 
-#: The parts of an address that pin down the building itself. Area, city and
-#: state are deliberately kept - a client should see that the candidate is in
-#: Koramangala, Bengaluru, just not which door they live behind.
+#: Words that only ever turn up in an address. A piece carrying one of these is
+#: treated as part of the building without further evidence.
 #:
 #: Note "nagar", "colony", "layout" and the like are absent: those name an
 #: area, not a street, so they stay on the CV.
-#: Words that only ever turn up in an address. A piece carrying one of these
-#: is treated as part of the building without further evidence.
 ADDRESS_STRONG_RE = re.compile(
     r"\b(?:flats?|apt|apartments?|h\.?\s*no\.?|house\s*no\.?|door\s*no\.?"
     r"|plot\s*no\.?|survey\s*no\.?|khasra|pin\s*code|pincode|p\.?o\.?\s*box"
@@ -239,9 +270,27 @@ ADDRESS_MAX_WORDS_PER_LINE = 14
 #: A bare door or flat number standing as its own comma-separated piece.
 DOOR_NUMBER_RE = re.compile(r"^[#no.\s-]*\d+\s*[A-Za-z]?(?:[-/]\s*\d+\s*[A-Za-z]?)?$", re.IGNORECASE)
 
-#: A full UK postcode narrows to a handful of houses, so it goes. An Indian PIN
-#: or a 5-digit US ZIP covers a whole area and is kept, like the city.
+#: A full UK postcode narrows to a handful of houses, so it goes.
 UK_POSTCODE_RE = re.compile(r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b", re.IGNORECASE)
+
+#: An Indian PIN or a similar 6-digit postal code. A detail of where the
+#: candidate lives rather than the name of the city, so it goes with the rest
+#: of the address - but only on a line already established as one, since six
+#: digits on their own are just as likely to be a salary figure.
+PIN_CODE_RE = re.compile(r"\b\d{6}\b")
+
+#: A label that announces a location: "Address:", "Current Location -",
+#: "Permanent Address". A line opening with one is an address beyond doubt,
+#: wherever on the CV it sits, so everything but the place name comes off it.
+ADDRESS_LABEL_RE = re.compile(
+    r"^[\s|•·\-–—]*"
+    r"(?:(?:current|present|permanent|residential|residence|home|local"
+    r"|correspondence|mailing|postal)\s+)?"
+    r"(?:addresses?|addr|locations?|residence|residing\s+at|based\s+(?:in|at)"
+    r"|house\s+address|city)"
+    r"\b[\s.:\-–—|]*",
+    re.IGNORECASE,
+)
 
 _PLACES = """
 india bengaluru bangalore mumbai bombay delhi new-delhi noida gurgaon gurugram
@@ -411,37 +460,85 @@ def _widen(text: str, start: int, end: int) -> tuple[int, int]:
         start -= 1
     prefix = text[:start]
     for label in (PHONE_LABEL_RE, EMAIL_LABEL_RE):
-        trailing = label.search(prefix)
-        while trailing:
-            if trailing.end() == len(prefix):
-                start = trailing.start()
+        for match in label.finditer(prefix):
+            # The label counts when only punctuation and short qualifiers sit
+            # between it and the detail, so "Contact No (M): +91..." goes whole
+            # rather than leaving "Contact No (M):" pointing at nothing.
+            if LABEL_FILLER_RE.match(prefix, match.end()):
+                start = match.start()
                 break
-            trailing = label.search(prefix, trailing.end())
+
+    # Punctuation left stranded at either end of the line goes too, so taking
+    # the postcode off "Ahmedabad-380001." does not leave a full stop adrift.
+    if not any(ch.isalnum() for ch in text[end:]):
+        end = len(text)
+    if not any(ch.isalnum() for ch in text[:start]):
+        start = 0
     return start, end
+
+
+#: A gap between two characters wider than this share of their height is read
+#: as a word break. PDFs routinely space words by moving the cursor rather than
+#: by writing a space character.
+CHAR_WORD_GAP_RATIO = 0.25
 
 
 def _line_groups(page: pymupdf.Page) -> Iterable[tuple[str, list[tuple[int, int, pymupdf.Rect]]]]:
     """
-    Rebuild each visual line as a single string.
+    Rebuild each visual line as a single string, character by character.
 
     Contact details are routinely split across several "words" ("+44", "20",
     "7946", "0912"), so matching word-by-word misses most phone numbers. This
     yields the joined line text plus a char-offset -> rect map.
-    """
-    lines: dict[tuple[int, int, int], list] = {}
-    for x0, y0, x1, y1, word, block, line, _word_no in page.get_text("words"):
-        lines.setdefault((block, line, 0), []).append((word, pymupdf.Rect(x0, y0, x1, y1)))
 
-    for key in sorted(lines):
-        parts = lines[key]
-        text_bits: list[str] = []
-        spans: list[tuple[int, int, pymupdf.Rect]] = []
-        cursor = 0
-        for word, rect in parts:
-            spans.append((cursor, cursor + len(word), rect))
-            text_bits.append(word)
-            cursor += len(word) + 1  # the joining space
-        yield " ".join(text_bits), spans
+    Built from individual characters rather than from whole words so that a
+    match covering part of a word redacts only that part. "Ahmedabad-380001" is
+    one word to the PDF, and taking the postcode off it must not take the city
+    with it. Word breaks are inferred from the spacing where the PDF has no
+    space character of its own.
+    """
+    try:
+        blocks = page.get_text("rawdict").get("blocks", [])
+    except Exception:  # a damaged text layer yields nothing to redact
+        return
+
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            text_bits: list[str] = []
+            spans: list[tuple[int, int, pymupdf.Rect]] = []
+            cursor = 0
+            previous: pymupdf.Rect | None = None
+            for span in line.get("spans", []):
+                for char in span.get("chars", []):
+                    rect = pymupdf.Rect(char["bbox"])
+                    letter = char.get("c", "")
+                    if (
+                        previous is not None
+                        and not letter.isspace()
+                        and not text_bits[-1].isspace()
+                        and rect.x0 - previous.x1
+                        > max(1.0, previous.height * CHAR_WORD_GAP_RATIO)
+                    ):
+                        # The gap itself becomes the space's rectangle, so a
+                        # redaction spanning it covers the whole run of text.
+                        spans.append(
+                            (
+                                cursor,
+                                cursor + 1,
+                                pymupdf.Rect(previous.x1, rect.y0, rect.x0, rect.y1),
+                            )
+                        )
+                        text_bits.append(" ")
+                        cursor += 1
+                    spans.append((cursor, cursor + 1, rect))
+                    text_bits.append(letter)
+                    cursor += 1
+                    previous = rect
+            text = "".join(text_bits)
+            if text.strip():
+                yield text, spans
 
 
 def _rects_for_span(
@@ -507,32 +604,248 @@ def _is_address_piece(piece: str, context: bool = False) -> bool:
     return context or bool(re.search(r"\d", piece))
 
 
-def _location_spans(text: str, protect: str) -> list[tuple[int, int, str]]:
+def _without_postcodes(piece: str) -> str:
+    """The piece with any postal code blanked out, for judging what is left.
+
+    "New Delhi - 110017" is a city plus a postcode, not a building. The code is
+    redacted separately, so it must not make the whole piece - city and all -
+    look like an address detail.
+    """
+    return PIN_CODE_RE.sub(" ", UK_POSTCODE_RE.sub(" ", piece))
+
+
+def _names_only_a_place(piece: str) -> bool:
+    """
+    Whether a piece of an address line carries nothing but a place name.
+
+    This is the keep test on a line already known to be an address: the area,
+    city, state and country stay, and anything else on the line - door and flat
+    numbers, floors, street and building names, postcodes - comes off. Written
+    as a keep test rather than a remove test on purpose: on a confirmed address
+    line, anything unrecognised is a detail of where the candidate lives.
+    """
+    stripped = _without_postcodes(piece).strip(" \t.,;:|-–—/")
+    if not stripped:
+        return True  # nothing left to remove
+    if len(stripped.split()) > ADDRESS_MAX_WORDS_PER_PIECE:
+        return False
+    if re.search(r"\d", stripped):
+        return False  # a door, flat, floor, plot or sector number
+    if ADDRESS_STRONG_RE.search(stripped) or ADDRESS_WEAK_RE.search(stripped):
+        return False  # names a street or a building
+    return True
+
+
+def _is_confirmed_address(text: str) -> tuple[bool, int]:
+    """
+    Whether the line is an address beyond doubt, and where the address starts.
+
+    True for a line that announces itself with an "Address:" label, and for one
+    carrying unmistakable address structure - a door number, a flat or plot
+    number, or a postcode. Such a line is stripped back to its place names
+    wherever it sits on the CV, because a "Personal Details" block at the foot
+    of a CV is every bit as identifying as one in the header.
+
+    The second value is the offset the address begins at, so a label can be
+    taken off along with the address it introduces.
+    """
+    label = ADDRESS_LABEL_RE.match(text)
+    if label and label.end() < len(text):
+        remainder = text[label.end():]
+        # A bare "Location" as a column heading introduces nothing; require
+        # something address-shaped after the label.
+        if PLACE_RE.search(remainder) or _has_address_context(remainder):
+            return True, label.start()
+    return _has_address_context(text), 0
+
+
+def _looks_like_an_address(text: str) -> bool:
+    """
+    Whether a header line reads as an address without proving it.
+
+    "12 Oakwood Road, Indiranagar, Bengaluru" has no flat number and no
+    postcode, so nothing on it is conclusive - but short comma-separated
+    pieces, most of them place names, is the shape of an address and not of a
+    sentence. Deliberately narrow: this runs over the top of page 1, where a
+    professional summary also lives.
+    """
+    pieces = [p.strip() for p in text.split(",")]
+    if len(pieces) < 2 or len(text.split()) > ADDRESS_MAX_WORDS_PER_LINE:
+        return False
+    if any(len(p.split()) > ADDRESS_MAX_WORDS_PER_PIECE for p in pieces):
+        return False
+    if not PLACE_RE.search(text):
+        return False
+    # Mostly place names, with at least one piece that is not. A line where
+    # every piece is a place has nothing to remove; one where most pieces are
+    # not ("Managed 12 people, based in London, grew the brand") is prose.
+    places = sum(1 for p in pieces if _names_only_a_place(p))
+    return places * 2 >= len(pieces) and places < len(pieces)
+
+
+#: How far apart two lines of one address may sit, as a multiple of the line's
+#: own height, and the most lines a single address is allowed to run to.
+ADDRESS_BLOCK_LINE_GAP = 1.8
+ADDRESS_BLOCK_MAX_LINES = 5
+
+#: A "Label: value" row, as a Personal Details block is written: "Date of
+#: Birth: 14 March 1988", "Languages known------------English, Hindi". Those
+#: sit directly under an address and must not be mistaken for more of it.
+#:
+#: The separator has to be a colon, a run of dashes, or a spaced dash, so
+#: "Ahmedabad-380001" - a city joined to its PIN - is not read as a label.
+DETAIL_ROW_RE = re.compile(
+    r"^[\s|•·]*"
+    r"[A-Za-z][A-Za-z'’&./]*(?:[ ][A-Za-z'’&./]+){0,3}"
+    r"(?:\s*:|\s*[-–—]{2,}|\s+[-–—]\s+)"
+    r"\s*\S",
+)
+
+
+def _continues_an_address(text: str, protect: str) -> bool:
+    """
+    Whether a line is fragmentary enough to be another line of an address.
+
+    An address is often typed over three or four lines - "2278, Raipur Kot ni
+    rang," / "Raipur Gate," / "Ahmedabad-380001." - and only the line carrying
+    the door number or the PIN proves what it is. The lines above it have to be
+    recognised by company rather than by content.
+
+    Deliberately requires evidence: a comma, a digit or a place name. Without
+    that the job title sitting directly above the address would be swallowed
+    with it.
+    """
+    stripped = text.strip()
+    if not stripped or len(stripped.split()) > ADDRESS_MAX_WORDS_PER_LINE:
+        return False
+    if CONTACT_HEADING_RE.match(stripped):
+        return False
+    if _protected_spans(stripped, protect):
+        return False  # the candidate's own name line is never part of it
+    # A line carrying a contact detail is a contact line, not an address one -
+    # it would otherwise annex the address and take the city with it.
+    if EMAIL_RE.search(stripped) or URL_RE.search(stripped):
+        return False
+    if any(True for _span in _phone_spans(stripped)):
+        return False
+    if _is_confirmed_address(stripped)[0]:
+        return True  # proves itself, whatever shape the line is
+    if DETAIL_ROW_RE.match(stripped):
+        return False  # a Personal Details row, not more of the address
+    return bool(
+        "," in stripped or re.search(r"\d", stripped) or PLACE_RE.search(stripped)
+    )
+
+
+def _address_block_lines(
+    lines: list[tuple[str, float, float]], protect: str
+) -> set[int]:
+    """
+    The lines of a multi-line address that should come off whole.
+
+    Grows a block outwards from every line that proves it is an address, then
+    keeps only its **last** line - the one carrying the city - and marks the
+    rest for removal. That is what reduces
+
+        2278, Raipur Kot ni rang,
+        Raipur Gate,
+        Ahmedabad-380001.
+
+    to "Ahmedabad": the earlier lines are the door and the street however they
+    are worded, and the last line is where the place name lives. A one-line
+    address is left to the piece-by-piece rules, which already keep its tail.
+    """
+    order = sorted(range(len(lines)), key=lambda i: (lines[i][1], i))
+
+    def joins(candidate: int, neighbour: int) -> bool:
+        text, top, bottom = lines[order[candidate]]
+        _n_text, n_top, n_bottom = lines[order[neighbour]]
+        height = max(1.0, min(bottom - top, n_bottom - n_top))
+        gap = max(top, n_top) - min(bottom, n_bottom)
+        if gap > height * ADDRESS_BLOCK_LINE_GAP:
+            return False
+        return _continues_an_address(text, protect)
+
+    whole: set[int] = set()
+    for position, index in enumerate(order):
+        if not _is_confirmed_address(lines[index][0])[0]:
+            continue
+        block = [position]
+        above = position - 1
+        while above >= 0 and len(block) < ADDRESS_BLOCK_MAX_LINES:
+            if not joins(above, block[0]):
+                break
+            block.insert(0, above)
+            above -= 1
+        below = position + 1
+        while below < len(order) and len(block) < ADDRESS_BLOCK_MAX_LINES:
+            if not joins(below, block[-1]):
+                break
+            block.append(below)
+            below += 1
+        whole.update(
+            order[p]
+            for p in block[:-1]
+            if not _protected_spans(lines[order[p]][0], protect)
+        )
+    return whole
+
+
+def _location_spans(text: str, protect: str, header: bool) -> list[tuple[int, int, str]]:
     """
     The parts of a location line that identify where the candidate lives.
 
-    Only the building and the street go. The area, city and state stay, so the
-    client still sees "Koramangala, Bengaluru" - just not the door number.
+    Only the building, street and postcode go. The area, city and state stay,
+    so the client still sees "Koramangala, Bengaluru" - just not the door the
+    candidate lives behind.
+
+    `header` says whether the line sits in the top slice of page 1. A confirmed
+    address is stripped anywhere on the CV; the weaker "looks like an address"
+    shape is only trusted in the header, where a candidate's own address sits.
     """
     protected = _protected_spans(text, protect)
 
     def clashes(start: int, end: int) -> bool:
         return any(start < p_end and end > p_start for p_start, p_end in protected)
 
-    spans = [
+    confirmed, address_start = _is_confirmed_address(text)
+    if not confirmed and not (header and _looks_like_an_address(text)):
+        if header and REDACT_CITY_AND_AREA:
+            return [
+                (m.start(), m.end(), "location")
+                for m in PLACE_RE.finditer(text)
+                if not clashes(m.start(), m.end())
+            ]
+        return []
+
+    spans: list[tuple[int, int, str]] = [
         (m.start(), m.end(), "location")
-        for m in UK_POSTCODE_RE.finditer(text)
+        for pattern in (UK_POSTCODE_RE, PIN_CODE_RE)
+        for m in pattern.finditer(text)
     ]
 
+    # The label goes with the address it introduced, the same way a bare
+    # "Contact" heading goes once the details under it have gone.
+    label = ADDRESS_LABEL_RE.match(text) if confirmed else None
+    if label:
+        spans.append((label.start(), label.end(), "location"))
+
     if "," in text:
-        # Addresses are written in comma-separated pieces. Drop the pieces that
-        # name a building or a street; keep the rest of the line.
+        # An address is written in comma-separated pieces. Keep the ones that
+        # name an area, a city or a state; drop every other piece.
+        loose = not confirmed
         context = _has_address_context(text)
         cursor = 0
         for piece in text.split(","):
             start, end = cursor, cursor + len(piece)
             cursor = end + 1
-            if not _is_address_piece(piece.strip(), context):
+            stripped = piece.strip()
+            if _names_only_a_place(stripped):
+                continue
+            # On a line that only looks like an address, a piece has to be
+            # positively address-shaped before it is removed; on a confirmed
+            # one, everything that is not a place name goes.
+            if loose and not _is_address_piece(stripped, context):
                 continue
             spans.append(
                 (
@@ -541,21 +854,15 @@ def _location_spans(text: str, protect: str) -> list[tuple[int, int, str]]:
                     "location",
                 )
             )
-    elif (
-        len(text.split()) <= ADDRESS_MAX_WORDS_PER_LINE
-        and (ADDRESS_STRONG_RE.search(text) or _is_door_number(text.split(" ")[0]))
-    ):
-        # No commas to separate the address from the rest of the line, so only
-        # an unmistakable address word will do - a street word plus a number
-        # would also match "led the trading floor redesign in 2021".
-        #
-        # Cut from the start through the last street word, which leaves the
-        # area and city that follow it.
+    elif confirmed and len(text.split()) <= ADDRESS_MAX_WORDS_PER_LINE:
+        # One run of words with no commas to separate the address from the
+        # place. Cut from the start of the address through the last street or
+        # building word, which leaves the area and city that follow it.
         matches = list(ADDRESS_STRONG_RE.finditer(text)) + list(
             ADDRESS_WEAK_RE.finditer(text)
         )
         if matches:
-            spans.append((0, max(m.end() for m in matches), "location"))
+            spans.append((address_start, max(m.end() for m in matches), "location"))
 
     if REDACT_CITY_AND_AREA:
         spans += [(m.start(), m.end(), "location") for m in PLACE_RE.finditer(text)]
@@ -575,10 +882,94 @@ def _protected_spans(text: str, protect: str) -> list[tuple[int, int]]:
     return spans
 
 
-#: Largest thing treated as a contact icon, and how far from the text it may
-#: sit. Sized for a glyph beside a line of text, not a photograph.
+#: Largest thing treated as a contact icon, and how far above or below the
+#: redacted text it may sit. Sized for a glyph beside a line of text, not a
+#: photograph. The vertical reach is about one line, so an icon still goes when
+#: its own link has wrapped onto the next line - a common CV header.
 ICON_MAX_SIZE = 30.0
-ICON_MAX_DISTANCE = 26.0
+ICON_MAX_DISTANCE = 16.0
+
+#: Fonts that ship nothing but icons. Any glyph drawn in one is an icon,
+#: whatever character the PDF claims it is.
+ICON_FONT_RE = re.compile(
+    r"awesome|icomoon|glyphicons?|octicons?|entypo|ionicons?|typicons?|socicon"
+    r"|themify|feather|materialicons|linearicons|simple[\s-]*line|elegant"
+    r"|foundation[\s-]*icons|dripicons|fontello|iconfont|icons?[\s-]*font"
+    r"|devicons?|academicons",
+    re.IGNORECASE,
+)
+
+#: Characters that render as a bullet, a dash or a tick rather than a contact
+#: icon. Separators are already swallowed with the text beside them, and these
+#: must not pull an innocent line into the icon pass.
+_NOT_ICON_CHARS = set("•·∙‣⁃–—‐‑‒―▪▫●◦○■□★☆✓✔✗✘→⇒»«※")
+
+
+def _is_icon_glyph(char: str, font: str) -> bool:
+    """
+    Whether one character is a contact icon rather than real text.
+
+    The GitHub, LinkedIn and envelope marks on a CV header are usually not
+    pictures at all - they are glyphs from an icon font, mapped into Unicode's
+    private use area or left unmapped entirely. Deleting the link text beside
+    one leaves the mark behind, pointing at nothing.
+    """
+    if not char or char.isspace() or char.isalnum() or char in _NOT_ICON_CHARS:
+        return False
+    code = ord(char)
+    return (
+        0xE000 <= code <= 0xF8FF  # private use - where icon fonts live
+        or 0xF0000 <= code <= 0x10FFFD  # supplementary private use
+        or code == 0xFFFD  # a glyph the font could not map back to Unicode
+        or 0x2600 <= code <= 0x27BF  # symbols and dingbats: envelope, phone
+        or 0x1F300 <= code <= 0x1FAFF  # pictographs and emoji
+        or bool(font and ICON_FONT_RE.search(font))
+    )
+
+
+def _icon_glyph_rects(page: pymupdf.Page) -> list[pymupdf.Rect]:
+    """Every character on the page that is really an icon."""
+    rects: list[pymupdf.Rect] = []
+    try:
+        blocks = page.get_text("rawdict").get("blocks", [])
+    except Exception:  # a damaged text layer must not stop the redaction
+        return rects
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                font = span.get("font", "")
+                for char in span.get("chars", []):
+                    if _is_icon_glyph(char.get("c", ""), font):
+                        rects.append(pymupdf.Rect(char["bbox"]))
+    return rects
+
+
+#: A hyperlink that only ever leads to a way of contacting the candidate.
+CONTACT_URI_RE = re.compile(
+    r"^\s*(?:mailto:|tel:|callto:|skype:|whatsapp:|sms:)"
+    r"|(?:linkedin|github|gitlab|behance|dribbble|medium|twitter|x)\.com"
+    r"|wa\.me|t\.me",
+    re.IGNORECASE,
+)
+
+
+def _contact_link_rects(page: pymupdf.Page) -> list[pymupdf.Rect]:
+    """
+    Where the page's contact hyperlinks sit.
+
+    A header often hangs the link on the icon alone, with no address written
+    out in text for the patterns above to match. The link's own rectangle is
+    then the only thing that says where the GitHub mark is.
+    """
+    rects: list[pymupdf.Rect] = []
+    for link in page.get_links():
+        uri = link.get("uri") or ""
+        rect = link.get("from")
+        if rect and uri and CONTACT_URI_RE.search(uri):
+            rects.append(pymupdf.Rect(rect))
+    return rects
 
 
 def _icon_redact_options() -> dict:
@@ -605,16 +996,23 @@ _ICON_REDACT_OPTIONS = _icon_redact_options()
 
 def _contact_icons(page: pymupdf.Page, targets: list[pymupdf.Rect]) -> list[pymupdf.Rect]:
     """
-    Small images and vector marks sitting right beside redacted contact text.
+    The icons belonging to the contact details that have just been removed.
 
-    A CV header usually pairs each detail with an icon. Deleting the text on
-    its own leaves a row of orphaned envelope and LinkedIn glyphs, which both
-    looks wrong and still says how to reach the candidate.
+    A CV header usually pairs each detail with an icon - an envelope, a phone,
+    the LinkedIn and GitHub marks. Deleting the text on its own leaves a row of
+    orphaned glyphs, which both looks wrong and still says where to find the
+    candidate. Three kinds turn up and all three are collected: icon-font
+    glyphs, small images, and small pieces of vector art.
+
+    Anything icon-sized on, or within a line of, a row that lost contact
+    details counts. Matching horizontally as well was too strict: a header
+    routinely wraps, leaving the GitHub mark at the right-hand end of one row
+    and the address it pointed at on the next.
     """
     if not targets:
         return []
 
-    candidates: list[pymupdf.Rect] = []
+    candidates: list[pymupdf.Rect] = _icon_glyph_rects(page)
     try:
         for image in page.get_images(full=True):
             candidates.extend(page.get_image_rects(image[0]))
@@ -632,15 +1030,32 @@ def _contact_icons(page: pymupdf.Page, targets: list[pymupdf.Rect]) -> list[pymu
         if rect.width <= 0 or rect.height <= 0:
             continue
         middle = (rect.y0 + rect.y1) / 2
-        for target in targets:
-            # On the same line as the removed text, and close enough alongside
-            # it to be its icon rather than a neighbouring piece of design.
-            if not (target.y0 - 3 <= middle <= target.y1 + 3):
-                continue
-            gap = max(rect.x0 - target.x1, target.x0 - rect.x1)
-            if gap <= ICON_MAX_DISTANCE:
-                found.append(pymupdf.Rect(rect) + (-1, -1, 1, 1))
-                break
+        if any(
+            target.y0 - ICON_MAX_DISTANCE <= middle <= target.y1 + ICON_MAX_DISTANCE
+            for target in targets
+        ):
+            found.append(pymupdf.Rect(rect) + (-1, -1, 1, 1))
+    return found
+
+
+def _icon_only_links(page: pymupdf.Page, link_rects: list[pymupdf.Rect]) -> list[pymupdf.Rect]:
+    """
+    Contact links that are drawn as an icon with no address written beside it.
+
+    Nothing in the text layer gives these away, so the link's own rectangle is
+    what gets redacted. Only taken when the rectangle is icon-sized and holds
+    no readable text, so a link wrapped around a line of prose is left alone.
+    """
+    found: list[pymupdf.Rect] = []
+    for rect in link_rects:
+        if rect.width > ICON_MAX_SIZE * 2 or rect.height > ICON_MAX_SIZE * 2:
+            continue
+        try:
+            text = page.get_textbox(rect)
+        except Exception:
+            continue
+        if not any(ch.isalnum() for ch in text):
+            found.append(pymupdf.Rect(rect) + (-1, -1, 1, 1))
     return found
 
 
@@ -669,8 +1084,21 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
             page.rect.height * HEADER_REGION_RATIO if page.number == 0 else 0.0
         )
 
+        # Materialised rather than streamed: an address runs over several lines
+        # and only one of them proves it, so the lines have to be seen together.
+        page_lines = list(_line_groups(page))
+        geometry = [
+            (
+                text,
+                min((rect.y0 for _s, _e, rect in spans), default=0.0),
+                max((rect.y1 for _s, _e, rect in spans), default=0.0),
+            )
+            for text, spans in page_lines
+        ]
+        address_block = _address_block_lines(geometry, protect)
+
         targets: list[pymupdf.Rect] = []
-        for text, spans in _line_groups(page):
+        for number, (text, spans) in enumerate(page_lines):
             found: list[tuple[int, int, str]] = []
             found += [(m.start(), m.end(), "email") for m in EMAIL_RE.finditer(text)]
             found += [(m.start(), m.end(), "url") for m in URL_RE.finditer(text)]
@@ -681,9 +1109,14 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
             if CONTACT_HEADING_RE.match(text) and not _protected_spans(text, protect):
                 found.append((0, len(text), "heading"))
 
-            line_top = min(rect.y0 for _s, _e, rect in spans) if spans else 0.0
-            if REDACT_LOCATIONS_EVERYWHERE or line_top <= header_limit:
-                found += _location_spans(text, protect)
+            if number in address_block:
+                # A street or door line of a multi-line address: nothing on it
+                # is the city, so the whole line goes.
+                found.append((0, len(text), "location"))
+            else:
+                line_top = min(rect.y0 for _s, _e, rect in spans) if spans else 0.0
+                in_header = REDACT_LOCATIONS_EVERYWHERE or line_top <= header_limit
+                found += _location_spans(text, protect, header=in_header)
 
             # An email contains an @ and dots; the URL pattern can also claim
             # part of it. Emails win, so drop overlapping URL/phone hits.
@@ -699,7 +1132,15 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
                 wide_start, wide_end = _widen(text, start, end)
                 targets.extend(_rects_for_span(spans, wide_start, wide_end))
 
-        icons = _contact_icons(page, targets)
+        # A contact link's own rectangle counts as a place a detail sat, so an
+        # icon is still found when the link was never written out as text.
+        link_rects = _contact_link_rects(page)
+        icons = _contact_icons(page, targets + link_rects)
+        icons += [
+            rect
+            for rect in _icon_only_links(page, link_rects)
+            if not any(rect in found for found in icons)
+        ]
 
         for rect in targets:
             # Filled with the surrounding paper colour rather than black bars,
@@ -1205,23 +1646,38 @@ def _draw_details_box(
 # -------------------------------------------------------------- pipeline ---
 
 
+@dataclass
+class _Layout:
+    """Where the next piece of CV goes, carried across every source page."""
+
+    out: pymupdf.Document
+    papers: list
+    page: "pymupdf.Page | None" = None
+    out_y: float = 0.0
+    sheets: int = 0
+
+
 def _flow_page(
-    out: pymupdf.Document,
+    layout: _Layout,
     src: pymupdf.Document,
     src_page: pymupdf.Page,
     paper: tuple[float, float, float],
-    papers: list,
     is_first: bool,
     box_bottom: float,
 ) -> None:
     """
-    Lay one source page out across as many output pages as it needs.
+    Lay one source page out, continuing wherever the last one finished.
 
     The page is placed as a series of content runs rather than in one piece,
     which does two things: an oversized gap between runs - the hole left where
     a contact block used to be - is squeezed back to MAX_CONTENT_GAP, and a
     page break lands between runs instead of through a line of text.
+
+    The sheet in progress carries over, so a source page that overruns by a few
+    lines no longer leaves most of a sheet blank before the next one starts.
     """
+    out = layout.out
+    papers = layout.papers
     size = src_page.rect
     segments = _content_segments(src_page)
 
@@ -1231,6 +1687,8 @@ def _flow_page(
         page = out.new_page(width=size.width, height=size.height)
         page.draw_rect(page.rect, color=None, fill=paper)
         papers.append(paper)
+        layout.sheets += 1
+        layout.page = None  # it fills its own sheet; the next page starts clean
         top = box_bottom if is_first else HEADER_BAND_HEIGHT + CONTENT_TOP_GAP
         # Scaled to fit rather than split: there is no text to break between,
         # and clipping a scanned page would lose whatever is at the bottom of
@@ -1263,63 +1721,68 @@ def _flow_page(
     fresh_top = HEADER_BAND_HEIGHT + CONTINUATION_TOP_GAP
     fresh_available = size.y1 - fresh_top
 
-    page = None
-    out_y = 0.0
-    started = 0
+    # Carry on down the sheet already in progress when a useful amount of it is
+    # still free; otherwise leave it and start clean.
+    if layout.page is not None:
+        if size.y1 - layout.out_y >= SOURCE_PAGE_MIN_SPACE:
+            layout.out_y += SOURCE_PAGE_GAP
+        else:
+            layout.page = None
 
     def start_page():
-        nonlocal page, out_y, started
-        page = out.new_page(width=size.width, height=size.height)
-        page.draw_rect(page.rect, color=None, fill=paper)
+        layout.page = out.new_page(width=size.width, height=size.height)
+        layout.page.draw_rect(layout.page.rect, color=None, fill=paper)
         papers.append(paper)
-        if started == 0:
-            out_y = first_top
-        else:
-            out_y = fresh_top
-        started += 1
+        layout.out_y = first_top if layout.sheets == 0 else fresh_top
+        layout.sheets += 1
 
     for index, (segment_start, segment_end) in enumerate(segments):
-        if page is not None and index:
+        if layout.page is not None and index:
             # Keep a run whole where it would otherwise be split for the sake
             # of a few points, but only when it fits on a page of its own.
             scaled = (segment_end - segment_start) * scale
             if (
-                out_y + gaps[index - 1] * scale + scaled > size.y1
+                layout.out_y + gaps[index - 1] * scale + scaled > size.y1
                 and scaled <= fresh_available
             ):
-                page = None
+                layout.page = None
             else:
-                out_y += gaps[index - 1] * scale
+                layout.out_y += gaps[index - 1] * scale
 
         cursor = segment_start
         remaining = segment_end - cursor
         while remaining > 0.5:
-            if page is None:
+            if layout.page is None:
                 start_page()
 
-            available = size.y1 - out_y
-            if available < BLANK_PAGE_TOLERANCE and started > 0:
-                page = None
+            available = size.y1 - layout.out_y
+            # Too little room left to be worth using - carry on overleaf. Only
+            # when something already sits above, so a freshly started sheet is
+            # never abandoned and the loop always makes progress.
+            if available < BLANK_PAGE_TOLERANCE and layout.out_y > fresh_top:
+                layout.page = None
                 continue
 
             part = min(remaining, available / scale)
             if part < remaining - 0.5:
                 part = _safe_split(src_page, cursor, part)
 
-            page.show_pdf_page(
-                pymupdf.Rect(left, out_y, left + width, out_y + part * scale),
+            layout.page.show_pdf_page(
+                pymupdf.Rect(
+                    left, layout.out_y, left + width, layout.out_y + part * scale
+                ),
                 src,
                 src_page.number,
                 clip=pymupdf.Rect(size.x0, cursor, size.x1, cursor + part),
             )
 
-            out_y += part * scale
+            layout.out_y += part * scale
             cursor += part
             remaining -= part
             if remaining > 0.5:
-                page = None  # the rest carries on overleaf
+                layout.page = None  # the rest carries on overleaf
 
-    if page is None and started == 0:
+    if layout.sheets == 0:
         start_page()  # an empty source page still gets a sheet
 
 
@@ -1477,6 +1940,7 @@ def generate_branded_cv(
             box_height = _details_box_height(src[0].rect, details)
 
             papers: list[tuple[float, float, float]] = []
+            layout = _Layout(out=out, papers=papers)
             for src_page in src:
                 paper = (
                     report.page_backgrounds[src_page.number]
@@ -1484,11 +1948,10 @@ def generate_branded_cv(
                     else WHITE
                 )
                 _flow_page(
-                    out,
+                    layout,
                     src,
                     src_page,
                     paper,
-                    papers,
                     is_first=src_page.number == 0,
                     box_bottom=box_top + box_height + gap,
                 )
