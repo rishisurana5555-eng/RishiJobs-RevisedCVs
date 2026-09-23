@@ -114,6 +114,8 @@ Anything icon-sized (up to `ICON_MAX_SIZE`, 30pt) on a row that lost contact det
 
 Artwork goes in a second pass, the only one allowed to touch it, and it blanks the icon's pixels rather than deleting a whole image - an icon that is part of a larger sprite does not take the sprite with it. Vector art is removed only when a redaction box covers it entirely.
 
+**An icon's box is pulled back off the text beside it.** The box is grown slightly so no fringe of the icon survives, but on a tight header that padding reaches into the next letter - and a redaction box reaching about a tenth of the way into a glyph deletes the whole glyph, which is how a location pin sitting flush against `Pune/ Mumbai` took the `P` with it. Every icon box is now clipped off any character that is staying, on whichever side that character sits. The allowance is a *share* of the character's size rather than a fixed distance, because the threshold scales with the type: 0.45pt is enough to lose a letter at 6pt and nowhere near enough at 20pt. Where clipping would leave nothing, the icon is left alone rather than damaging the word.
+
 ### Headings
 
 A bare **"Contact"**, "Contact Details", "Get in Touch", "Address" or "Permanent Address" heading is removed as well. Once the details under it are gone the heading points at nothing. It has to be the whole line, so a heading goes while "Please contact me for references" or "Contact Centre modernisation" stays. **"Personal Details" is deliberately kept** - that heading also introduces the date of birth and languages, which stay, so removing it would orphan them.

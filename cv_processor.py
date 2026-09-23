@@ -927,13 +927,13 @@ def _is_icon_glyph(char: str, font: str) -> bool:
     )
 
 
-def _icon_glyph_rects(page: pymupdf.Page) -> list[pymupdf.Rect]:
-    """Every character on the page that is really an icon."""
-    rects: list[pymupdf.Rect] = []
+def _page_characters(page: pymupdf.Page) -> list[tuple[str, str, pymupdf.Rect]]:
+    """Every character on the page, with the font it is drawn in and its box."""
+    chars: list[tuple[str, str, pymupdf.Rect]] = []
     try:
         blocks = page.get_text("rawdict").get("blocks", [])
     except Exception:  # a damaged text layer must not stop the redaction
-        return rects
+        return chars
     for block in blocks:
         if block.get("type") != 0:
             continue
@@ -941,9 +941,78 @@ def _icon_glyph_rects(page: pymupdf.Page) -> list[pymupdf.Rect]:
             for span in line.get("spans", []):
                 font = span.get("font", "")
                 for char in span.get("chars", []):
-                    if _is_icon_glyph(char.get("c", ""), font):
-                        rects.append(pymupdf.Rect(char["bbox"]))
-    return rects
+                    chars.append((char.get("c", ""), font, pymupdf.Rect(char["bbox"])))
+    return chars
+
+
+def _icon_glyph_rects(chars: list[tuple[str, str, pymupdf.Rect]]) -> list[pymupdf.Rect]:
+    """Every character on the page that is really an icon."""
+    return [rect for letter, font, rect in chars if _is_icon_glyph(letter, font)]
+
+
+def _mostly_covered(rect: pymupdf.Rect, targets: list[pymupdf.Rect]) -> bool:
+    """Whether a character already sits inside something being redacted."""
+    area = rect.get_area()
+    if area <= 0:
+        return True
+    return any((rect & target).get_area() > area * 0.5 for target in targets)
+
+
+#: How far a redaction box is grown around an icon, so no fringe is left.
+ICON_PADDING = 1.0
+
+#: How far a redaction box may reach into a character that is staying, as a
+#: share of that character's own size, and its ceiling in points.
+#:
+#: A box reaching about a tenth of the way into a glyph deletes the whole
+#: glyph - which is how an icon sitting flush against "Pune/ Mumbai" took the
+#: "P" with it. The allowance is a share rather than a fixed distance because
+#: the threshold scales with the type: 0.45pt is enough to lose a letter at
+#: 6pt, where it is nowhere near enough at 20pt.
+ICON_SAFE_INTRUSION_RATIO = 0.05
+ICON_SAFE_INTRUSION_MAX = 0.5
+
+
+def _safe_icon_box(
+    core: pymupdf.Rect, keepers: list[pymupdf.Rect]
+) -> "pymupdf.Rect | None":
+    """
+    Pad an icon's box, then pull it back off any text that is staying.
+
+    Padding is what makes the icon disappear cleanly, but on a tight header the
+    pad reaches into the letter beside it and deletes it. The box is clipped to
+    whichever side the letter sits on, so the icon still goes and the word does
+    not.
+    """
+    box = pymupdf.Rect(core) + (
+        -ICON_PADDING,
+        -ICON_PADDING,
+        ICON_PADDING,
+        ICON_PADDING,
+    )
+    for other in keepers:
+        if (box & other).is_empty:
+            continue
+        across = min(ICON_SAFE_INTRUSION_MAX, other.width * ICON_SAFE_INTRUSION_RATIO)
+        down = min(ICON_SAFE_INTRUSION_MAX, other.height * ICON_SAFE_INTRUSION_RATIO)
+        if other.x0 >= core.x1:  # the text sits to the right
+            box.x1 = min(box.x1, other.x0 + across)
+        elif other.x1 <= core.x0:  # to the left
+            box.x0 = max(box.x0, other.x1 - across)
+        elif other.y0 >= core.y1:  # below
+            box.y1 = min(box.y1, other.y0 + down)
+        elif other.y1 <= core.y0:  # above
+            box.y0 = max(box.y0, other.y1 - down)
+        elif other.x0 - core.x0 > core.x1 - other.x1:
+            # The letter overlaps the icon's own box. The letter wins; clip to
+            # whichever side leaves the most of the icon covered.
+            box.x1 = min(box.x1, other.x0 + across)
+        else:
+            box.x0 = max(box.x0, other.x1 - across)
+
+    if box.x1 - box.x0 <= 0.5 or box.y1 - box.y0 <= 0.5:
+        return None  # clipped away to nothing - leave the page alone
+    return box
 
 
 #: A hyperlink that only ever leads to a way of contacting the candidate.
@@ -994,7 +1063,11 @@ def _icon_redact_options() -> dict:
 _ICON_REDACT_OPTIONS = _icon_redact_options()
 
 
-def _contact_icons(page: pymupdf.Page, targets: list[pymupdf.Rect]) -> list[pymupdf.Rect]:
+def _contact_icons(
+    page: pymupdf.Page,
+    targets: list[pymupdf.Rect],
+    chars: list[tuple[str, str, pymupdf.Rect]],
+) -> list[pymupdf.Rect]:
     """
     The icons belonging to the contact details that have just been removed.
 
@@ -1012,7 +1085,7 @@ def _contact_icons(page: pymupdf.Page, targets: list[pymupdf.Rect]) -> list[pymu
     if not targets:
         return []
 
-    candidates: list[pymupdf.Rect] = _icon_glyph_rects(page)
+    candidates: list[pymupdf.Rect] = _icon_glyph_rects(chars)
     try:
         for image in page.get_images(full=True):
             candidates.extend(page.get_image_rects(image[0]))
@@ -1034,7 +1107,7 @@ def _contact_icons(page: pymupdf.Page, targets: list[pymupdf.Rect]) -> list[pymu
             target.y0 - ICON_MAX_DISTANCE <= middle <= target.y1 + ICON_MAX_DISTANCE
             for target in targets
         ):
-            found.append(pymupdf.Rect(rect) + (-1, -1, 1, 1))
+            found.append(pymupdf.Rect(rect))
     return found
 
 
@@ -1055,7 +1128,7 @@ def _icon_only_links(page: pymupdf.Page, link_rects: list[pymupdf.Rect]) -> list
         except Exception:
             continue
         if not any(ch.isalnum() for ch in text):
-            found.append(pymupdf.Rect(rect) + (-1, -1, 1, 1))
+            found.append(pymupdf.Rect(rect))
     return found
 
 
@@ -1134,12 +1207,26 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
 
         # A contact link's own rectangle counts as a place a detail sat, so an
         # icon is still found when the link was never written out as text.
+        chars = _page_characters(page)
         link_rects = _contact_link_rects(page)
-        icons = _contact_icons(page, targets + link_rects)
-        icons += [
+        cores = _contact_icons(page, targets + link_rects, chars)
+        cores += [
             rect
             for rect in _icon_only_links(page, link_rects)
-            if not any(rect in found for found in icons)
+            if not any(rect in found for found in cores)
+        ]
+
+        # Text that is staying, which an icon's redaction box must not reach
+        # into. Characters already inside a target are going anyway.
+        keepers = [
+            rect
+            for letter, font, rect in chars
+            if not letter.isspace()
+            and not _is_icon_glyph(letter, font)
+            and not _mostly_covered(rect, targets)
+        ]
+        icons = [
+            box for box in (_safe_icon_box(core, keepers) for core in cores) if box
         ]
 
         for rect in targets:
