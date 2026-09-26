@@ -120,6 +120,10 @@ Artwork goes in a second pass, the only one allowed to touch it, and it blanks t
 
 A bare **"Contact"**, "Contact Details", "Get in Touch", "Address" or "Permanent Address" heading is removed as well. Once the details under it are gone the heading points at nothing. It has to be the whole line, so a heading goes while "Please contact me for references" or "Contact Centre modernisation" stays. **"Personal Details" is deliberately kept** - that heading also introduces the date of birth and languages, which stay, so removing it would orphan them.
 
+Qualified labels - "Contact Number", "Mobile No.", "Phone Number", "Email ID" - are removed the same way. A bare "Mobile", "Phone" or "Email" is too ordinary a word to remove on its own ("Mobile" is also a skill), so it only goes when the detail beside it on the same row was removed.
+
+Labels are judged by **row**, because a Personal Details table (`Address   : E-202, ...`) is two separate lines of text to the PDF, label and value. An **"Address" label stays while its area and city do**: `Address : E-202, Aagam Navkar Bldg, Sachin, Surat, Gujarat` becomes `Address   Sachin, Surat, Gujarat`, not a city floating with no label. The removed part leaves a gap in the row - a PDF does not reflow - so the kept text stays where it was.
+
 ### Locations
 
 **Only the area, city, state and country survive.** Everything else on an address line comes off - flat and door numbers, floors, plot and survey numbers, street and building names, PIN codes and postcodes - so `Flat 3B, Prestige Towers, Koramangala, Bengaluru 560034` is reduced to `Koramangala, Bengaluru`. A client should see roughly where the candidate is, and nothing that narrows it to a door.
@@ -141,6 +145,8 @@ Raipur Gate,                     ->  (removed)
 Ahmedabad-380001.                ->  Ahmedabad
 ```
 
+A line that is nothing but known place names stays even when it is not the last - `E-202,AagamNavkarBldg. Sachin,` / `Surat` / `Gujarat` keeps `Surat` and `Gujarat`. Only whole pieces the place list recognises count, so `Raipur Gate` above still goes.
+
 The earlier lines are the door and the street however they happen to be worded - a locality name no keyword would ever catch - and the last line is where the place name lives. Lines only join a block when they are fragmentary: short, close by, and carrying a comma, a digit or a place name. A job title directly above the address has none of those, so it is not swallowed; a line carrying an email, a phone number or a URL is a contact line and never joins; and a `Label: value` row is recognised as a Personal Details entry, so `Date of Birth: 14 March 1988` and `Languages known------------English, Hindi` sitting under an address are left alone.
 
 The candidate's name is protected explicitly and never redacted, whatever else matches on that line, and a line carrying it never joins a block. A postal code inside a piece is judged separately, so `New Delhi - 110017` loses the code and keeps the city.
@@ -149,7 +155,9 @@ To strip the area and city as well, set `REDACT_CITY_AND_AREA = True` in `cv_pro
 
 ### Address words
 
-Address words fall in two tiers. "Flat", "Plot No" and "Pincode" only ever appear in an address, so they count on their own. "Road", "Street", "Tower" and the like also turn up in ordinary CV prose, so they only count when a number sits beside them or the line has already proved it is an address. Words like **"building", "house", "cross", "court" and "plot"** are in neither list - "hands-on experience **building** scalable systems", "**in-house** team", "**cross**-functional" are all normal CV language, and a number nearby is not rare enough to save them. Pieces longer than five words are ignored: an address is written in short pieces, a sentence is not.
+Address words fall in two tiers. "Flat", "Plot No" and "Pincode" only ever appear in an address, so they count on their own. "Road", "Street", "Tower" and the like also turn up in ordinary CV prose, so they only count when a number sits beside them or the line has already proved it is an address. Words like **"building", "house", "cross", "court" and "plot"** are in neither list - "hands-on experience **building** scalable systems", "**in-house** team", "**cross**-functional" are all normal CV language, and a number nearby is not rare enough to save them. Pieces longer than five words are ignored: an address is written in short pieces, a sentence is not. A street word run straight onto the building name (`AagamNavkarBldg`) counts too.
+
+A flat number may carry a wing letter - `E-202`, `B/1204` - as long as it has at least two digits, so a visa class like `H-1B` is not read as one. **A comma between two digits groups a number, it does not split an address**: `1,25,000/month` is one piece, which is what stops a salary's `25` being read as a door number and the line being stripped as an address.
 
 ### Phones
 

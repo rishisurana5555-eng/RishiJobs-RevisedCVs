@@ -214,10 +214,26 @@ LABEL_FILLER_RE = re.compile(
 #: date of birth and languages, which stay, so removing it would orphan them.
 CONTACT_HEADING_RE = re.compile(
     r"^[\s|•·\-–—]*"
-    r"(?:contact(?:\s*(?:details|info|information|me|us))?"
+    r"(?:contact(?:\s*(?:details|info|information|me|us|nos?\.?|numbers?))?"
+    r"|(?:phone|mobile|mob|cell|tel|telephone|whatsapp)\s*(?:nos?\.?|numbers?)"
+    r"|e-?mail\s*(?:id|address)"
     r"|get\s*in\s*touch|reach\s*me|how\s*to\s*reach\s*me"
     r"|(?:current|present|permanent|residential|home|postal|mailing)?\s*"
     r"(?:address|location))"
+    r"[\s:|•·\-–—]*$",
+    re.IGNORECASE,
+)
+
+#: A contact heading that labels an address rather than a way of reaching the
+#: candidate. When the area and city beside it survive, it still labels them.
+ADDRESS_HEADING_RE = re.compile(r"(?:address|location)[\s:|•·\-–—]*$", re.IGNORECASE)
+
+#: A bare label such as "Mobile" or "Email". Too ordinary a word to remove on
+#: its own - "Mobile" is also a skill - so it only goes when the detail it
+#: labelled, on the same row, has just been removed.
+BARE_CONTACT_LABEL_RE = re.compile(
+    r"^[\s|•·\-–—]*"
+    r"(?:e-?mail|phone|mobile|mob|cell|tel|telephone|whatsapp|linkedin)"
     r"[\s:|•·\-–—]*$",
     re.IGNORECASE,
 )
@@ -259,7 +275,11 @@ ADDRESS_STRONG_RE = re.compile(
 #: number nearby is not rare enough to save them.
 ADDRESS_WEAK_RE = re.compile(
     r"\b(?:streets?|st|roads?|rd|lanes?|ln|avenues?|ave|marg|gali|galli"
-    r"|towers?|villas?|residency|society|bldg|block|floor|nivas|bhavan)\b",
+    r"|towers?|villas?|residency|society|bldg|block|floor|nivas|bhavan)\b"
+    # Run straight onto the building name, as in "AagamNavkarBldg". Case
+    # sensitive, so only a capital after a lower-case letter counts.
+    r"|(?-i:(?<=[a-z])(?:Bldg|Road|Rd|Marg|Lane|Towers?|Villas?|Residency"
+    r"|Society|Apartments?|Nivas|Bhavan)\b)",
     re.IGNORECASE,
 )
 
@@ -269,6 +289,19 @@ ADDRESS_MAX_WORDS_PER_LINE = 14
 
 #: A bare door or flat number standing as its own comma-separated piece.
 DOOR_NUMBER_RE = re.compile(r"^[#no.\s-]*\d+\s*[A-Za-z]?(?:[-/]\s*\d+\s*[A-Za-z]?)?$", re.IGNORECASE)
+
+#: A wing or block letter joined to the flat number: "E-202", "B/1204". At
+#: least two digits, so a visa class such as "H-1B" or "F-1" is not taken.
+WING_DOOR_NUMBER_RE = re.compile(r"^[:\s]*[A-Za-z]\s*[-/]\s*(\d{2,})\s*[A-Za-z]?$")
+
+#: A comma between two digits groups a number ("1,25,000") rather than
+#: separating two pieces of an address.
+PIECE_SPLIT_RE = re.compile(r"(?<!\d),|,(?!\d)")
+
+
+def _pieces(text: str) -> list[str]:
+    """The comma-separated pieces of a line, leaving grouped numbers whole."""
+    return PIECE_SPLIT_RE.split(text)
 
 #: A full UK postcode narrows to a handful of houses, so it goes.
 UK_POSTCODE_RE = re.compile(r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b", re.IGNORECASE)
@@ -563,6 +596,9 @@ def _is_door_number(piece: str) -> bool:
     stripped = piece.strip()
     if YEAR_RE.match(stripped):
         return False
+    wing = WING_DOOR_NUMBER_RE.match(stripped)
+    if wing:
+        return not YEAR_RE.match(wing.group(1))
     return bool(DOOR_NUMBER_RE.match(stripped))
 
 
@@ -578,7 +614,7 @@ def _has_address_context(text: str) -> bool:
         return True
     return any(
         _is_door_number(piece.strip()) or ADDRESS_STRONG_RE.search(piece)
-        for piece in text.split(",")
+        for piece in _pieces(text)
     )
 
 
@@ -669,7 +705,7 @@ def _looks_like_an_address(text: str) -> bool:
     sentence. Deliberately narrow: this runs over the top of page 1, where a
     professional summary also lives.
     """
-    pieces = [p.strip() for p in text.split(",")]
+    pieces = [p.strip() for p in _pieces(text)]
     if len(pieces) < 2 or len(text.split()) > ADDRESS_MAX_WORDS_PER_LINE:
         return False
     if any(len(p.split()) > ADDRESS_MAX_WORDS_PER_PIECE for p in pieces):
@@ -787,8 +823,22 @@ def _address_block_lines(
             order[p]
             for p in block[:-1]
             if not _protected_spans(lines[order[p]][0], protect)
+            and not _is_known_places(lines[order[p]][0])
         )
     return whole
+
+
+def _is_known_places(text: str) -> bool:
+    """
+    Whether a line is nothing but recognised place names, as in "Surat" above
+    "Gujarat". Such a line is the city of a block, not its street, so it stays.
+
+    Only whole pieces the place list knows count: "Raipur Gate" is a locality
+    that happens to start with a city's name, and it still goes.
+    """
+    pieces = [p.strip(" \t.,;:|-–—/") for p in _pieces(text)]
+    pieces = [p for p in pieces if p]
+    return bool(pieces) and all(PLACE_RE.fullmatch(p) for p in pieces)
 
 
 def _location_spans(text: str, protect: str, header: bool) -> list[tuple[int, int, str]]:
@@ -836,7 +886,7 @@ def _location_spans(text: str, protect: str, header: bool) -> list[tuple[int, in
         loose = not confirmed
         context = _has_address_context(text)
         cursor = 0
-        for piece in text.split(","):
+        for piece in _pieces(text):
             start, end = cursor, cursor + len(piece)
             cursor = end + 1
             stripped = piece.strip()
@@ -1132,6 +1182,44 @@ def _icon_only_links(page: pymupdf.Page, link_rects: list[pymupdf.Rect]) -> list
     return found
 
 
+def _values_on_row(
+    number: int,
+    geometry: list[tuple[str, float, float]],
+    page_lines: list[tuple[str, list[tuple[int, int, pymupdf.Rect]]]],
+) -> list[int]:
+    """
+    The lines sitting to the right of a label on the same row - its value.
+
+    A Personal Details table is typed as "Address" in one column and
+    ": E-202, ..." in the next, and the PDF keeps the two as separate lines.
+    """
+    _text, top, bottom = geometry[number]
+    label_spans = page_lines[number][1]
+    if not label_spans:
+        return []
+    label_right = max(rect.x1 for _s, _e, rect in label_spans)
+    found: list[int] = []
+    for other, (_o_text, o_top, o_bottom) in enumerate(geometry):
+        o_spans = page_lines[other][1]
+        if other == number or not o_spans:
+            continue
+        overlap = min(bottom, o_bottom) - max(top, o_top)
+        if overlap <= 0.5 * min(bottom - top, o_bottom - o_top):
+            continue
+        if min(rect.x0 for _s, _e, rect in o_spans) >= label_right:
+            found.append(other)
+    return found
+
+
+def _survives(text: str, hits: list[tuple[int, int, str]]) -> bool:
+    """Whether anything readable is left on a line once its hits are removed."""
+    gone: set[int] = set()
+    for start, end, _category in hits:
+        wide_start, wide_end = _widen(text, start, end)
+        gone.update(range(wide_start, wide_end))
+    return any(ch.isalnum() for i, ch in enumerate(text) if i not in gone)
+
+
 def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> RedactionReport:
     """
     Delete contact and personal location details from every page, in place.
@@ -1170,17 +1258,12 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
         ]
         address_block = _address_block_lines(geometry, protect)
 
-        targets: list[pymupdf.Rect] = []
+        line_hits: list[list[tuple[int, int, str]]] = []
         for number, (text, spans) in enumerate(page_lines):
             found: list[tuple[int, int, str]] = []
             found += [(m.start(), m.end(), "email") for m in EMAIL_RE.finditer(text)]
             found += [(m.start(), m.end(), "url") for m in URL_RE.finditer(text)]
             found += [(s, e, "phone") for s, e in _phone_spans(text)]
-
-            # A bare "Contact" / "Address" heading goes wherever it sits - it
-            # only ever introduced the details that have just been removed.
-            if CONTACT_HEADING_RE.match(text) and not _protected_spans(text, protect):
-                found.append((0, len(text), "heading"))
 
             if number in address_block:
                 # A street or door line of a multi-line address: nothing on it
@@ -1199,7 +1282,37 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
                 for s, e, cat in found
                 if cat == "email" or not any(s < ee and e > es for es, ee in emails)
             ]
+            line_hits.append(kept)
 
+        # Labels are judged once every detail is known, because in a table
+        # ("Contact Number  : +91 ...") the label and its value are separate
+        # lines of text on the same row.
+        for number, (text, _spans) in enumerate(page_lines):
+            if _protected_spans(text, protect):
+                continue
+            row = _values_on_row(number, geometry, page_lines)
+            if CONTACT_HEADING_RE.match(text):
+                # A bare "Contact" / "Address" heading goes wherever it sits -
+                # it only ever introduced the details that have been removed.
+                # An "Address" label stays while the city beside it does.
+                if not (
+                    ADDRESS_HEADING_RE.search(text)
+                    and any(
+                        _survives(page_lines[n][0], line_hits[n])
+                        and any(cat == "location" for _s, _e, cat in line_hits[n])
+                        for n in row
+                    )
+                ):
+                    line_hits[number].append((0, len(text), "heading"))
+            elif BARE_CONTACT_LABEL_RE.match(text) and any(
+                cat in ("email", "phone", "url")
+                for n in row
+                for _s, _e, cat in line_hits[n]
+            ):
+                line_hits[number].append((0, len(text), "heading"))
+
+        targets: list[pymupdf.Rect] = []
+        for (text, spans), kept in zip(page_lines, line_hits):
             for start, end, category in kept:
                 report.add(category, text[start:end])
                 wide_start, wide_end = _widen(text, start, end)
