@@ -17,6 +17,7 @@ still there for anything that wants the same thing as an HTTP API.
 Run:  streamlit run app.py
 """
 
+import importlib
 import os
 import re
 
@@ -24,6 +25,24 @@ import streamlit as st
 
 import cv_processor
 import dashboard
+
+
+def _fresh(module):
+    """
+    The module as it is on disk now. After a git push, Streamlit Cloud reruns this file but keeps
+    the modules it imported earlier, so the new app.py ran against the old dashboard.py and crashed
+    (AttributeError: 'Link' has no 'auto'). Reloading a module whose file changed prevents that.
+    """
+    mtime = os.path.getmtime(module.__file__)
+    if getattr(module, "_loaded_mtime", None) != mtime:
+        module = importlib.reload(module)
+        module._loaded_mtime = mtime
+    return module
+
+
+# cv_processor first: dashboard imports from it.
+cv_processor = _fresh(cv_processor)
+dashboard = _fresh(dashboard)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_PATH = os.path.join(BASE_DIR, "templates", "logo.png")

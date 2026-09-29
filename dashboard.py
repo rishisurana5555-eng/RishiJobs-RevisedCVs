@@ -139,7 +139,7 @@ def _post(origin: str, message: dict) -> None:
     # json.dumps output is valid JavaScript; "</" is escaped so the data can't close the <script> tag.
     payload = json.dumps(message).replace("</", "<\\/")
     target = json.dumps(origin)
-    components.html(
+    script = (
         f"""<script>
         (function () {{
           var msg = {payload};
@@ -148,6 +148,10 @@ def _post(origin: str, message: dict) -> None:
           try {{ if (window.top.opener) targets.push(window.top.opener); }} catch (e) {{}}
           targets.forEach(function (t) {{ try {{ t.postMessage(msg, {target}); }} catch (e) {{}} }});
         }})();
-        </script>""",
-        height=0,
+        </script>"""
     )
+    # st.iframe replaces components.html (deprecated, to be removed); both run the script in a frame.
+    if hasattr(st, "iframe"):
+        st.iframe(script, height=1)
+    else:
+        components.html(script, height=0)
