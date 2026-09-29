@@ -161,6 +161,20 @@ st.caption("Every field is required.")
 
 submitted = st.button("Generate edited CV", type="primary")
 
+# The dashboard's hidden editor (auto=1): generate once, straight away, without a click.
+if link and link.auto and not st.session_state.get("auto_ran"):
+    st.session_state["auto_ran"] = True
+    submitted = True
+
+
+def fail(problems: list[str]) -> None:
+    """Shows what went wrong - and in auto mode tells the dashboard too - then stops this run."""
+    for problem in problems:
+        st.error(problem)
+    if link and link.auto:
+        dashboard.send_problems(link.origin, problems)
+    st.stop()
+
 
 def form_problems() -> list[str]:
     """Everything wrong with the form, so the recruiter can fix it in one go."""
@@ -197,10 +211,8 @@ if submitted:
     # A fresh attempt replaces whatever was generated last time.
     st.session_state.pop("result", None)
     problems = form_problems()
-    for problem in problems:
-        st.error(problem)
     if problems:
-        st.stop()
+        fail(problems)
 
     try:
         details = cv_processor.CvDetails.from_dict(
@@ -214,19 +226,15 @@ if submitted:
             }
         )
     except ValueError as exc:
-        for problem in exc.args[0]:
-            st.error(problem)
-        st.stop()
+        fail(list(exc.args[0]))
 
     with st.spinner("Editing the CV…"):
         try:
             output, report = cv_processor.generate_branded_cv(cv_bytes, details)
         except ValueError as exc:
-            st.error(str(exc))
-            st.stop()
+            fail([str(exc)])
         except Exception as exc:
-            st.error(f"Could not process the CV: {exc}")
-            st.stop()
+            fail([f"Could not process the CV: {exc}"])
 
     # Kept in the session rather than shown once: a download button reruns the
     # script, and the result has to survive that for the Word copy to be offered.
@@ -307,6 +315,16 @@ if result:
     # dashboard only accepts a PDF back.
     if link and not result["sent"]:
         result["sent"] = True
+        # The same cautions as above, for the PM who never sees this page in auto mode.
+        cautions = []
+        if report.looks_scanned:
+            cautions.append("This CV looks like a scan: nothing could be removed, so the contact details are still on it. Check it by hand.")
+        elif report.pages_without_text:
+            cautions.append(f"No text found on page(s) {', '.join(map(str, report.pages_without_text))} - check those by hand.")
+        elif not report.total:
+            cautions.append("No contact details were found to remove - if the CV shows an email or phone number, check it by hand.")
+        if report.note_truncated:
+            cautions.append("The recruiter note was too long for the box and was shortened on the CV.")
         dashboard.send_back(
             link.origin,
             output,
@@ -319,6 +337,7 @@ if result:
                 "noticePeriod": details.notice_period,
                 "recruiterNote": details.recruiter_note,
             },
+            cautions,
         )
         st.success(
             "✅ The edited CV has been sent to the dashboard form. "
