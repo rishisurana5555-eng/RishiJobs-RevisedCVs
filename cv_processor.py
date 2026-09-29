@@ -1578,6 +1578,34 @@ def format_salary(text: str) -> str:
     return f"{trimmed} {SALARY_UNIT}"
 
 
+#: A notice period typed as a bare number of days ("45").
+NOTICE_DAYS_RE = re.compile(r"\d+")
+
+
+def format_notice_period(text: str) -> str:
+    """A bare number of days reads as "45 days"; a preset is shown as picked."""
+    text = text.strip()
+    if NOTICE_DAYS_RE.fullmatch(text):
+        days = int(text)
+        return f"{days} day" if days == 1 else f"{days} days"
+    return text
+
+
+def format_person_name(text: str) -> str:
+    """
+    "PRIYA raman" -> "Priya Raman", whatever case it was typed in.
+
+    Each part of a hyphenated or apostrophised name is capitalised too, so
+    "vance-sterling" and "o'brien" come out as "Vance-Sterling" and "O'Brien".
+    """
+    def cap(part: str) -> str:
+        return part[:1].upper() + part[1:].lower()
+
+    return " ".join(
+        re.sub(r"[^\-']+", lambda m: cap(m.group()), word) for word in text.split()
+    )
+
+
 def is_above_norm(current: str, expected: str) -> bool:
     """True when the expected salary is more than 30% above the current one."""
     current_value = parse_salary(current)
@@ -1594,13 +1622,22 @@ class CvDetails:
     expected_salary: str = ""
     notice_period: str = ""
     recruiter_note: str = ""
+    job_title: str = ""
 
     @classmethod
     def from_dict(cls, payload: dict) -> "CvDetails":
+        """
+        Every field is required. The name is put into title case, and a
+        notice period given as a bare number of days gets "days" added.
+        """
         errors = []
-        name = str(payload.get("candidate_name", "")).strip()
+        name = format_person_name(str(payload.get("candidate_name", "")))
         if not name:
             errors.append("Candidate name is required.")
+
+        job_title = " ".join(str(payload.get("job_title", "")).split())
+        if not job_title:
+            errors.append("Job title is required.")
 
         salaries = {}
         for key, label in (
@@ -1608,12 +1645,18 @@ class CvDetails:
             ("expected_salary", "Expected salary"),
         ):
             raw = str(payload.get(key, "")).strip()
-            if raw and not SALARY_RE.fullmatch(raw):
+            if not raw:
+                errors.append(f"{label} is required.")
+            elif not SALARY_RE.fullmatch(raw):
                 errors.append(
                     f"{label} must be a number in {SALARY_UNIT} - digits only, "
                     "with an optional decimal point (e.g. 18 or 18.5)."
                 )
             salaries[key] = raw
+
+        notice = format_notice_period(str(payload.get("notice_period", "")))
+        if not notice:
+            errors.append("Notice period is required.")
 
         note = str(payload.get("recruiter_note", "")).strip()
         if not note:
@@ -1627,18 +1670,19 @@ class CvDetails:
             candidate_name=name,
             current_salary=salaries["current_salary"],
             expected_salary=salaries["expected_salary"],
-            notice_period=str(payload.get("notice_period", "")).strip(),
+            notice_period=notice,
             recruiter_note=note,
+            job_title=job_title,
         )
 
     @property
     def expected_salary_display(self) -> str:
         """
-        The expected salary as it should appear on the branded CV.
+        The expected salary as it should appear on the branded CV: "24 LPA",
+        or "As per industry norms" (no unit) when it breaks the 30% rule.
 
-        Left blank reads as "As per industry norms" as well: a recruiter who
-        does not fill it in is declining to name a figure, which is the same
-        thing the 30% rule is saying.
+        Blank reads as "As per industry norms" as well, for API callers built
+        before the field was required.
         """
         if not self.expected_salary or is_above_norm(
             self.current_salary, self.expected_salary
@@ -2114,8 +2158,15 @@ def generate_branded_cv(
     pdf_bytes: bytes,
     details: CvDetails,
     logo: "str | bytes" = LOGO_PATH,
+    watermark: bool = True,
 ) -> tuple[bytes, RedactionReport]:
-    """Redact, brand and return the finished CV plus a report of what went."""
+    """
+    Redact, brand and return the finished CV plus a report of what went.
+
+    watermark=False leaves the faint logo off - the Word copy is made from
+    that, because Word turns the watermark into a solid picture that pushes
+    the text around.
+    """
     try:
         src = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     except Exception:
@@ -2159,7 +2210,8 @@ def generate_branded_cv(
             # Decoration happens once every page's content is in place: the
             # watermark sits over the CV, and the details box over both.
             for index, page in enumerate(out):
-                _draw_watermark(page, faded)
+                if watermark:
+                    _draw_watermark(page, faded)
                 if HEADER_BAND_HEIGHT > 0:
                     _draw_header_band(page, crest, papers[index])
 
@@ -2277,6 +2329,33 @@ def guess_candidate_name(pdf_bytes: bytes) -> str:
         doc.close()
 
 
-def cv_filename(details: CvDetails) -> str:
-    safe = re.sub(r"[^A-Za-z0-9]+", "_", details.candidate_name).strip("_")
-    return f"{safe or 'Candidate'}_RishiJobs.pdf"
+def cv_filename(details: CvDetails, extension: str = "pdf") -> str:
+    """<Name>_<Surname>_<Job_Title>_RishiJobs.<extension>"""
+    def safe(text: str) -> str:
+        return re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_")
+
+    parts = [safe(details.candidate_name) or "Candidate", safe(details.job_title), "RishiJobs"]
+    return "_".join(p for p in parts if p) + f".{extension}"
+
+
+def generate_branded_docx(pdf_bytes: bytes, details: CvDetails) -> bytes:
+    """
+    An editable Word copy of the finished CV.
+
+    Converted from the branded PDF rather than rebuilt, so it carries the same
+    redactions, details box and header. The watermark is left off: Word turns
+    it into a solid picture that pushes the text onto extra pages. The layout
+    is a close approximation - Word reflows text - so it is offered alongside
+    the PDF, not instead.
+    """
+    branded, _report = generate_branded_cv(pdf_bytes, details, watermark=False)
+    # Imported here: it is slow to load and only needed when a Word copy is asked for.
+    from pdf2docx import Converter
+
+    converter = Converter(stream=branded)
+    try:
+        buffer = io.BytesIO()
+        converter.convert(buffer)
+        return buffer.getvalue()
+    finally:
+        converter.close()

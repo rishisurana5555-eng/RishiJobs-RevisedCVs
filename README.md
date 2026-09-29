@@ -9,7 +9,11 @@ Takes a candidate's CV (PDF) and returns a client-ready version:
 - **Salaries in LPA** - digits only, validated on both the form and the API
 - **Expected salary protected** - a hike of more than 30% shows as "As per industry norms" instead of the figure
 - **The candidate's design is untouched** - the original page is placed whole at full size, never re-typeset or shrunk to fit
-- **Downloads straight from the browser** as `<Candidate_Name>_RishiJobs.pdf` - nothing is emailed or sent anywhere
+- **Downloads straight from the browser** as `<Name>_<Surname>_<Job_Title>_RishiJobs.pdf` - nothing is emailed or sent anywhere
+- **Editable Word copy on request** - after generating, *Create an editable Word copy* converts the finished CV to `.docx`, with the same file name. It is left without the watermark, and Word reflows the text, so the layout is close to the PDF but not identical
+- **Every field is required** - name, job title, both salaries, notice period and recruiter note
+- **Names tidied** - however the name is typed (`PRIYA raman`), the CV and the file name use `Priya Raman`
+- **Notice period** - pick a preset, or *Other* and type a number of days (`45`, digits only); the CV shows `45 days`
 
 The candidate's **name is kept** and is read off the CV automatically to pre-fill the form. Of their address, **only the area, city and state are kept** - the flat and door number, floor, street, building and postcode all go, so a client sees "Koramangala, Bengaluru" and nothing that narrows it further.
 
@@ -25,6 +29,20 @@ python -m streamlit run app.py     # http://localhost:8501
 Or just double-click **`run.bat`**.
 
 The Streamlit app calls the processing code directly, so that is the only process you need. `api.py` exposes the same thing as an HTTP API for scripts or another front end - start it with `run-api.bat` if you want it.
+
+---
+
+## Opened from the Rishi Jobs dashboard
+
+When a PM sends a PE's candidate to the Client Team, the dashboard opens this app (embedded in its form, or in a new tab) with the candidate's details in the link. [dashboard.py](dashboard.py) handles that:
+
+- The form is **pre-filled** from the link - candidate name, job title, salaries, notice period and recruiter note - once per session, so edits made here are kept.
+- The **original CV is loaded from its Google Drive link** (`cv_url`), so nothing needs uploading. Only `drive.google.com` / `docs.google.com` links are fetched, and the file must be shared as "anyone with the link" (the dashboard's upload script does that). Uploading a PDF here still replaces it.
+- After **Generate edited CV**, the PDF is also **posted back to the dashboard page** (`window.postMessage`), where it is attached to the form. The download button works as before.
+
+The edited CV is only ever posted to the dashboard's own addresses (`DASHBOARD_ORIGINS` in `dashboard.py`, plus `localhost` for development). Opened on its own, without `from=dashboard`, the app behaves exactly as before.
+
+Embedding needs the app to be **public** on Streamlit Community Cloud; a private app can't be shown inside another site. If it is kept private, the PM uses **Open in a new tab** in the dashboard instead, which works the same way once they are signed in to Streamlit.
 
 ---
 
@@ -45,6 +63,7 @@ The Streamlit app calls the processing code directly, so that is the only proces
 |---|---|
 | `cv_processor.py` | All the PDF work - redaction, details box, logo, watermark |
 | `app.py` | Streamlit front end - the app itself |
+| `dashboard.py` | Pre-fill from the dashboard's link, load the original CV from Drive, send the edited CV back |
 | `api.py` | Optional: the same processing as an HTTP API |
 | `templates/logo.png` | The Rishi Jobs logo |
 | `samples/` | A test CV |
@@ -60,12 +79,16 @@ The Streamlit app calls the processing code directly, so that is the only proces
 | `POST /api/cv/preview` | Same inputs, returns JSON listing what would be redacted |
 | `POST /api/cv/detect-name` | Reads the candidate's name off a CV, to pre-fill the form |
 
-Send a multipart form with `cv_file` plus `candidate_name` (required), and optionally `current_salary`, `expected_salary`, `notice_period` and `recruiter_note`. A JSON body with the PDF in `cv_base64` works too. The logo is fixed and cannot be overridden through the API.
+Send a multipart form with `cv_file` plus `candidate_name`, `job_title`, `current_salary`, `expected_salary`, `notice_period` and `recruiter_note` - all required. A bare number for `notice_period` (`45`) is printed as `45 days`. A JSON body with the PDF in `cv_base64` works too. The logo is fixed and cannot be overridden through the API.
 
 ```bash
 curl -X POST http://127.0.0.1:5001/api/cv/process \
   -F "cv_file=@samples/cv.pdf" \
   -F "candidate_name=Priya Raman" \
+  -F "job_title=Brand Manager" \
+  -F "current_salary=18" \
+  -F "expected_salary=22" \
+  -F "recruiter_note=Strong fit for the brand role." \
   -F "notice_period=60 days" \
   -o branded.pdf
 ```
@@ -76,7 +99,7 @@ The response carries `X-Redactions` (how many details were removed), `X-Looks-Sc
 
 ## The expected-salary rule
 
-The CV prints **"As per industry norms"** instead of the expected salary when it is **left blank**, or when it is more than **30%** above the current salary. A recruiter who does not fill it in is declining to name a figure, which is the same thing the 30% rule says. Both figures have to be readable for the rule to fire - if either is blank or non-numeric, whatever was typed is shown as-is.
+The CV prints **"As per industry norms"** instead of the expected salary when it is more than **30%** above the current salary. That wording is printed on its own, with no `LPA` after it.
 
 Both salary fields are **in LPA** and accept digits only, with an optional decimal point - `18`, `18.5`, `24`. Anything else (`18,00,000`, `₹18L`, `eighteen`) is rejected by the form *and* by the API, so a stray value cannot slip through a direct API call. The CV prints them as `18 LPA`.
 
