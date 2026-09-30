@@ -166,13 +166,8 @@ if current_salary_na:
     current_salary = cv_processor.SALARY_NA
 expected_salary = col2.text_input("Expected salary (LPA) *", key="expected_salary", placeholder="e.g. 24")
 st.caption(
-    "Salaries are in LPA - digits only, decimals allowed (18, 18.5). The CV adds "
-    "“LPA” itself, and shows “As per industry norms” instead of the expected "
-    "salary when it is more than 30% above the current one."
-)
-st.caption(
-    "**Fresher:** enter **0** as the current salary - the CV shows “Fresher”. "
-    "**Freelancer** or no fixed salary: tick **N/A** - the CV shows “N/A”."
+    "**Fresher:** enter **0** as the current salary. "
+    "**Freelancer** or no fixed salary: tick **N/A**."
 )
 
 col3, col4 = st.columns(2)
