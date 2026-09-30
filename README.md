@@ -2,7 +2,7 @@
 
 Takes a candidate's CV (PDF) and returns a client-ready version:
 
-- **Contact details removed** - email, phone, LinkedIn/web profiles, their icons, and the candidate's street address are deleted from the page, not covered over
+- **Contact details removed** - email, phone (also partly hidden ones like `94xxx45xxx`), LinkedIn/web profiles, personal sites (`Portfolio: ishita-product.example.com`, `name.github.io`, `name.dev`), their icons, and the candidate's street address are deleted from the page, not covered over
 - **Recruiter details box on the CV itself** - current salary, expected salary and notice period across one row, with the recruiter's note full-width underneath
 - **Logo on every page**, in a letterhead band matched to the CV's own paper colour
 - **Faint navy watermark** behind the content on every page

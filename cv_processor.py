@@ -176,6 +176,62 @@ URL_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: A personal site written out bare, with no http:// or www. Kept to shapes a
+#: skill, degree or employer name doesn't take ("B.Tech", "Node.js",
+#: "ASP.NET", "Amazon.com"): an address of three or more parts
+#: (ishita-product.example.com, name.github.io), a domain with a path
+#: (behance.net/ishita), or a personal-site ending (.me, .dev, .site ...).
+_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+BARE_SITE_RE = re.compile(
+    rf"(?<![@\w.-]){_LABEL}(?:\.{_LABEL})+\.[A-Za-z]{{2,}}(?:/[^\s|,;]*)?(?![\w@-])"
+    rf"|(?<![@\w.-]){_LABEL}\.[A-Za-z]{{2,}}/[^\s|,;]+"
+    rf"|(?<![@\w.-]){_LABEL}\.(?:me|dev|site|xyz|design|page|online|portfolio|studio|art|link|bio)\b(?:/[^\s|,;]*)?",
+    re.IGNORECASE,
+)
+
+#: A country's own second-level domain ("amazon.co.uk") - an employer, not a
+#: personal site, unless it has a path.
+_COUNTRY_DOMAIN_RE = re.compile(
+    r"^[^./]+\.(?:co|com|org|net|ac|gov|edu)\.[A-Za-z]{2}$", re.IGNORECASE
+)
+
+#: "Portfolio: ishitadesigns.com" - the label goes with the address it
+#: introduces. The address has to look like one, so "Portfolio: 12 projects"
+#: is left alone.
+LABELLED_SITE_RE = re.compile(
+    r"(?:portfolio|website|web\s*site|personal\s*(?:web\s*)?site|blog|web)"
+    r"\s*[:\-–—]\s*(?:https?://)?[^\s|,;]*[A-Za-z0-9]\.[A-Za-z]{2,}[^\s|,;]*",
+    re.IGNORECASE,
+)
+
+
+def _url_spans(text: str) -> list[tuple[int, int]]:
+    """Where web profiles and personal sites sit in a line of text."""
+    spans = [m.span() for m in URL_RE.finditer(text)]
+    spans += [m.span() for m in LABELLED_SITE_RE.finditer(text)]
+    spans += [
+        m.span()
+        for m in BARE_SITE_RE.finditer(text)
+        if not _COUNTRY_DOMAIN_RE.match(m.group(0))
+    ]
+    # The patterns overlap ("Portfolio: x.example.com" is also a bare site):
+    # merge them so each address is removed and reported once.
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start < merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+#: A phone number with some digits hidden: a run of x's / stars right beside a
+#: digit, e.g. "94xxx45xxx" or "+91 98XXX XXX12" (not "2019-2020 xx").
+MASKED_PHONE_RE = re.compile(
+    r"(?<![\w@])(?:\+\d{1,3}[\s.\-]?)?"
+    r"(?=[\dxX*\s.\-]*(?:\d[xX*]{2,}|[xX*]{2,}\d))"
+    r"[\dxX*][\dxX*\s.\-]{7,16}[\dxX*](?![\w@])"
+)
+
 # A phone number is only accepted once the digit count lands in a plausible
 # range (see _phone_spans), which is what keeps "2012 - 2016" out of the net.
 PHONE_RE = re.compile(
@@ -233,7 +289,8 @@ ADDRESS_HEADING_RE = re.compile(r"(?:address|location)[\s:|•·\-–—]*$", re
 #: labelled, on the same row, has just been removed.
 BARE_CONTACT_LABEL_RE = re.compile(
     r"^[\s|•·\-–—]*"
-    r"(?:e-?mail|phone|mobile|mob|cell|tel|telephone|whatsapp|linkedin)"
+    r"(?:e-?mail|phone|mobile|mob|cell|tel|telephone|whatsapp|linkedin"
+    r"|portfolio|website|web\s*site|blog)"
     r"[\s:|•·\-–—]*$",
     re.IGNORECASE,
 )
@@ -388,7 +445,7 @@ SEPARATORS = set(" \t|•·∙●◦-–—/,;")
 CATEGORY_LABELS = {
     "email": "Email addresses",
     "phone": "Phone numbers",
-    "url": "LinkedIn / web profiles",
+    "url": "LinkedIn / web profiles / personal sites",
     "location": "Address / location",
     "heading": "Contact headings",
 }
@@ -482,6 +539,11 @@ def _phone_spans(text: str) -> Iterable[tuple[int, int]]:
     for match in PHONE_RE.finditer(text):
         digits = sum(ch.isdigit() for ch in match.group())
         if PHONE_MIN_DIGITS <= digits <= PHONE_MAX_DIGITS:
+            yield match.span()
+    # A number partly hidden with x's or stars ("94xxx45xxx") still goes.
+    for match in MASKED_PHONE_RE.finditer(text):
+        shown = re.sub(r"[\s.\-()+]", "", match.group())
+        if PHONE_MIN_DIGITS <= len(shown) <= PHONE_MAX_DIGITS and sum(ch.isdigit() for ch in shown) >= 2:
             yield match.span()
 
 
@@ -760,7 +822,7 @@ def _continues_an_address(text: str, protect: str) -> bool:
         return False  # the candidate's own name line is never part of it
     # A line carrying a contact detail is a contact line, not an address one -
     # it would otherwise annex the address and take the city with it.
-    if EMAIL_RE.search(stripped) or URL_RE.search(stripped):
+    if EMAIL_RE.search(stripped) or _url_spans(stripped):
         return False
     if any(True for _span in _phone_spans(stripped)):
         return False
@@ -1262,7 +1324,7 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
         for number, (text, spans) in enumerate(page_lines):
             found: list[tuple[int, int, str]] = []
             found += [(m.start(), m.end(), "email") for m in EMAIL_RE.finditer(text)]
-            found += [(m.start(), m.end(), "url") for m in URL_RE.finditer(text)]
+            found += [(s, e, "url") for s, e in _url_spans(text)]
             found += [(s, e, "phone") for s, e in _phone_spans(text)]
 
             if number in address_block:
