@@ -97,6 +97,9 @@ if link and not st.session_state.get("prefilled"):
     st.session_state["prefilled"] = True
     for key, value in link.fields.items():
         st.session_state[key] = value
+    if cv_processor.is_salary_na(st.session_state.get("current_salary", "")):
+        st.session_state["current_salary"] = ""
+        st.session_state["current_salary_na"] = True
     if link.notice_period in NOTICE_PERIODS:
         st.session_state["notice_choice"] = link.notice_period
     elif link.notice_period:
@@ -151,12 +154,25 @@ job_title = st.text_input(
 )
 
 col1, col2 = st.columns(2)
-current_salary = col1.text_input("Current salary (LPA) *", key="current_salary", placeholder="e.g. 18 or 18.5")
+salary_cols = col1.columns([3, 1], vertical_alignment="bottom")
+current_salary_na = salary_cols[1].checkbox("N/A", key="current_salary_na")
+current_salary = salary_cols[0].text_input(
+    "Current salary (LPA) *",
+    key="current_salary",
+    placeholder="e.g. 18 or 18.5",
+    disabled=current_salary_na,
+)
+if current_salary_na:
+    current_salary = cv_processor.SALARY_NA
 expected_salary = col2.text_input("Expected salary (LPA) *", key="expected_salary", placeholder="e.g. 24")
 st.caption(
     "Salaries are in LPA - digits only, decimals allowed (18, 18.5). The CV adds "
     "“LPA” itself, and shows “As per industry norms” instead of the expected "
     "salary when it is more than 30% above the current one."
+)
+st.caption(
+    "**Fresher:** enter **0** as the current salary - the CV shows “Fresher”. "
+    "**Freelancer** or no fixed salary: tick **N/A** - the CV shows “N/A”."
 )
 
 col3, col4 = st.columns(2)
@@ -206,6 +222,8 @@ def form_problems() -> list[str]:
         problems.append("Please enter the job title - it is used in the file name.")
     for label, value in (("current", current_salary), ("expected", expected_salary)):
         value = value.strip()
+        if label == "current" and current_salary_na:
+            continue
         if not value:
             problems.append(f"Please enter the {label} salary.")
         elif not SALARY_RE.fullmatch(value):

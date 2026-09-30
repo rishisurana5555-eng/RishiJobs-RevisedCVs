@@ -103,6 +103,8 @@ The CV prints **"As per industry norms"** instead of the expected salary when it
 
 Both salary fields are **in LPA** and accept digits only, with an optional decimal point - `18`, `18.5`, `24`. Anything else (`18,00,000`, `₹18L`, `eighteen`) is rejected by the form *and* by the API, so a stray value cannot slip through a direct API call. The CV prints them as `18 LPA`.
 
+For the **current salary** only: `0` (a fresher) is printed as **`Fresher`**, and `N/A` (a freelancer, or no fixed salary - the **N/A** tick box on the form) is printed as **`N/A`**, neither with `LPA` after it.
+
 Change the threshold with `SALARY_HIKE_THRESHOLD` in `cv_processor.py`, and the wording with `SALARY_AS_PER_NORMS`.
 
 ---

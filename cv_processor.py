@@ -1640,6 +1640,26 @@ def format_salary(text: str) -> str:
     return f"{trimmed} {SALARY_UNIT}"
 
 
+#: A current salary that does not apply - a freelancer, say. Printed as is.
+SALARY_NA = "N/A"
+
+#: Printed, with no unit, for a current salary of 0.
+SALARY_FRESHER = "Fresher"
+
+
+def is_salary_na(text: str) -> bool:
+    return text.strip().upper() == SALARY_NA
+
+
+def format_current_salary(text: str) -> str:
+    """"N/A", "Fresher" for 0, or the figure in LPA."""
+    if is_salary_na(text):
+        return SALARY_NA
+    if parse_salary(text) == 0:
+        return SALARY_FRESHER
+    return format_salary(text)
+
+
 #: A notice period typed as a bare number of days ("45").
 NOTICE_DAYS_RE = re.compile(r"\d+")
 
@@ -1707,7 +1727,9 @@ class CvDetails:
             ("expected_salary", "Expected salary"),
         ):
             raw = str(payload.get(key, "")).strip()
-            if not raw:
+            if key == "current_salary" and is_salary_na(raw):
+                raw = SALARY_NA
+            elif not raw:
                 errors.append(f"{label} is required.")
             elif not SALARY_RE.fullmatch(raw):
                 errors.append(
@@ -1754,7 +1776,7 @@ class CvDetails:
 
     def columns(self) -> list[tuple[str, str]]:
         return [
-            ("Current Salary", format_salary(self.current_salary)),
+            ("Current Salary", format_current_salary(self.current_salary)),
             ("Expected Salary", self.expected_salary_display),
             ("Notice Period", self.notice_period or "Not specified"),
         ]
