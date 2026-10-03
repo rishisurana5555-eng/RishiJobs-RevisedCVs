@@ -1709,7 +1709,7 @@ class CvDetails:
     @classmethod
     def from_dict(cls, payload: dict) -> "CvDetails":
         """
-        Every field is required. The name is put into title case, and a
+        Every field except the expected salary is required. The name is put into title case, and a
         notice period given as a bare number of days gets "days" added.
         """
         errors = []
@@ -1729,6 +1729,8 @@ class CvDetails:
             raw = str(payload.get(key, "")).strip()
             if key == "current_salary" and is_salary_na(raw):
                 raw = SALARY_NA
+            elif not raw and key == "expected_salary":
+                pass  # optional - printed as "As per industry norms"
             elif not raw:
                 errors.append(f"{label} is required.")
             elif not SALARY_RE.fullmatch(raw):
@@ -1765,8 +1767,7 @@ class CvDetails:
         The expected salary as it should appear on the branded CV: "24 LPA",
         or "As per industry norms" (no unit) when it breaks the 30% rule.
 
-        Blank reads as "As per industry norms" as well, for API callers built
-        before the field was required.
+        Blank reads as "As per industry norms" as well - the field is optional.
         """
         if not self.expected_salary or is_above_norm(
             self.current_salary, self.expected_salary

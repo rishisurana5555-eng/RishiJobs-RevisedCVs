@@ -79,7 +79,7 @@ Embedding needs the app to be **public** on Streamlit Community Cloud; a private
 | `POST /api/cv/preview` | Same inputs, returns JSON listing what would be redacted |
 | `POST /api/cv/detect-name` | Reads the candidate's name off a CV, to pre-fill the form |
 
-Send a multipart form with `cv_file` plus `candidate_name`, `job_title`, `current_salary`, `expected_salary`, `notice_period` and `recruiter_note` - all required. A bare number for `notice_period` (`45`) is printed as `45 days`. A JSON body with the PDF in `cv_base64` works too. The logo is fixed and cannot be overridden through the API.
+Send a multipart form with `cv_file` plus `candidate_name`, `job_title`, `current_salary`, `expected_salary`, `notice_period` and `recruiter_note` - all required except `expected_salary`. A bare number for `notice_period` (`45`) is printed as `45 days`. A JSON body with the PDF in `cv_base64` works too. The logo is fixed and cannot be overridden through the API.
 
 ```bash
 curl -X POST http://127.0.0.1:5001/api/cv/process \
@@ -99,7 +99,7 @@ The response carries `X-Redactions` (how many details were removed), `X-Looks-Sc
 
 ## The expected-salary rule
 
-The CV prints **"As per industry norms"** instead of the expected salary when it is more than **30%** above the current salary. That wording is printed on its own, with no `LPA` after it.
+The CV prints **"As per industry norms"** instead of the expected salary when it is more than **30%** above the current salary. That wording is printed on its own, with no `LPA` after it. The same wording is printed when the expected salary is **left blank** - the field is optional.
 
 Both salary fields are **in LPA** and accept digits only, with an optional decimal point - `18`, `18.5`, `24`. Anything else (`18,00,000`, `₹18L`, `eighteen`) is rejected by the form *and* by the API, so a stray value cannot slip through a direct API call. The CV prints them as `18 LPA`.
 

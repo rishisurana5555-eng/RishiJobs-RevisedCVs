@@ -164,7 +164,21 @@ current_salary = salary_cols[0].text_input(
 )
 if current_salary_na:
     current_salary = cv_processor.SALARY_NA
-expected_salary = col2.text_input("Expected salary (LPA) *", key="expected_salary", placeholder="e.g. 24")
+
+
+def keep_salary_digits() -> None:
+    """Drops anything typed into the expected salary that is not a digit or a decimal point."""
+    value = re.sub(r"[^\d.]", "", st.session_state.get("expected_salary", ""))
+    whole, dot, rest = value.partition(".")
+    st.session_state["expected_salary"] = whole + dot + rest.replace(".", "")
+
+
+expected_salary = col2.text_input(
+    "Expected salary (LPA)",
+    key="expected_salary",
+    placeholder="e.g. 24 - leave blank for “As per industry norms”",
+    on_change=keep_salary_digits,
+)
 st.caption(
     "**Fresher:** enter **0** as the current salary. "
     "**Freelancer** or no fixed salary: tick **N/A**."
@@ -187,7 +201,7 @@ recruiter_note = st.text_area(
     placeholder="Why this candidate fits - availability, strengths, anything the client should know.",
     height=120,
 )
-st.caption("Every field is required.")
+st.caption("Every field is required except the expected salary.")
 
 submitted = st.button("Generate edited CV", type="primary")
 
@@ -218,6 +232,8 @@ def form_problems() -> list[str]:
     for label, value in (("current", current_salary), ("expected", expected_salary)):
         value = value.strip()
         if label == "current" and current_salary_na:
+            continue
+        if not value and label == "expected":
             continue
         if not value:
             problems.append(f"Please enter the {label} salary.")
