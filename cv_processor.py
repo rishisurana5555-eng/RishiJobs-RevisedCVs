@@ -169,10 +169,52 @@ SOURCE_PAGE_GAP = 18.0
 # eating dates, salary figures and postcodes off real CVs.
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
+#: Professional and social profile sites. Any address on one of these is the
+#: candidate's own profile, so it goes - and so does the icon beside it.
+_SOCIAL_SITES = (
+    r"linkedin|github|gitlab|bitbucket|behance|dribbble|medium|substack|hashnode"
+    r"|twitter|x|instagram|facebook|fb|youtube|threads|tiktok|quora|reddit"
+    r"|stackoverflow|kaggle|leetcode|hackerrank|codechef|codeforces|topcoder"
+    r"|geeksforgeeks|researchgate|orcid|wellfound|angel|topmate|peerlist|unstop"
+    r"|artstation|linktr|dev|t|wa|scholar\.google"
+)
+_SOCIAL_TLDS = r"(?:com|net|org|io|co|in|me|to|ee|ai|dev)"
+
 URL_RE = re.compile(
     r"(?:https?://|www\.)[^\s|]+"
-    r"|(?:[A-Za-z0-9-]+\.)?(?:linkedin|github|gitlab|behance|dribbble|medium|x)"
-    r"\.com/[^\s|]+",
+    rf"|(?<![\w.-])(?:[A-Za-z0-9-]+\.)?(?:{_SOCIAL_SITES})\.{_SOCIAL_TLDS}/[^\s|]+",
+    re.IGNORECASE,
+)
+
+#: The name of a profile site written as a word - "LinkedIn", "GitHub",
+#: "Stack Overflow". Too ordinary to remove wherever it appears ("GitHub" is
+#: also a skill), so it only goes as the text of a profile link, after a
+#: "LinkedIn:" style label, or as an item of its own in a separated header row
+#: ("LinkedIn | GitHub").
+_SOCIAL_WORDS = (
+    r"linked\s*in|git\s*hub|git\s*lab|bit\s*bucket|behance|dribbble|medium"
+    r"|substack|hashnode|twitter|x|instagram|facebook|youtube|threads"
+    r"|stack\s*overflow|kaggle|leet\s*code|hacker\s*rank|code\s*chef"
+    r"|code\s*forces|researchgate|orcid|google\s*scholar|wellfound|angel\s*list"
+    r"|topmate|peerlist|unstop|artstation|linktree"
+)
+_SOCIAL_LABEL = rf"(?:my\s+)?(?:{_SOCIAL_WORDS}|portfolio|website|blog)(?:\s*(?:profile|page|id|url|link))?"
+_SOCIAL_EDGE = r"[\s|•·●▪:\-–—]*"
+SOCIAL_WORD_RE = re.compile(rf"{_SOCIAL_EDGE}{_SOCIAL_LABEL}{_SOCIAL_EDGE}", re.IGNORECASE)
+
+#: A site name standing alone between separators, or alone on its line.
+#: "Jira GitHub Slack" is a list of skills, so a single space either side does
+#: not count as a separator.
+SOCIAL_ITEM_RE = re.compile(
+    rf"(?:^|(?<=[|•·●▪])|(?<=\s\s))\s*{_SOCIAL_LABEL}(?=\s*[|•·●▪]|\s{{2,}}|\s*$)",
+    re.IGNORECASE,
+)
+
+#: "LinkedIn: rishi-surana", "GitHub ID: rishis" - a profile handle with the
+#: site named in front of it. The colon is required, so "GitHub - CI/CD" in a
+#: skills line is left alone.
+SOCIAL_HANDLE_RE = re.compile(
+    rf"\b(?:{_SOCIAL_WORDS})\s*(?:profile|id|handle|url|username)?\s*:\s*@?[\w./-]*\w",
     re.IGNORECASE,
 )
 
@@ -223,6 +265,25 @@ def _url_spans(text: str) -> list[tuple[int, int]]:
         else:
             merged.append((start, end))
     return merged
+
+
+def _social_spans(text: str, header: bool, contact_row: bool) -> list[tuple[int, int]]:
+    """
+    Labelled profile handles anywhere, and bare site names on a header row.
+
+    A bare name only goes on a row that is clearly contact details - one that
+    also holds an email, phone or address, or holds nothing but site names -
+    so "Git | GitHub | Docker" near the top of the page keeps its "GitHub".
+    """
+    spans = [m.span() for m in SOCIAL_HANDLE_RE.finditer(text)]
+    if header:
+        items = [m.span() for m in SOCIAL_ITEM_RE.finditer(text) if m.group().strip()]
+        rest = "".join(
+            ch for i, ch in enumerate(text) if not any(s <= i < e for s, e in items)
+        )
+        if items and (contact_row or not any(ch.isalnum() for ch in rest)):
+            spans += items
+    return spans
 
 #: A phone number with some digits hidden: a run of x's / stars right beside a
 #: digit, e.g. "94xxx45xxx" or "+91 98XXX XXX12" (not "2019-2020 xx").
@@ -998,7 +1059,7 @@ def _protected_spans(text: str, protect: str) -> list[tuple[int, int]]:
 #: redacted text it may sit. Sized for a glyph beside a line of text, not a
 #: photograph. The vertical reach is about one line, so an icon still goes when
 #: its own link has wrapped onto the next line - a common CV header.
-ICON_MAX_SIZE = 30.0
+ICON_MAX_SIZE = 40.0
 ICON_MAX_DISTANCE = 16.0
 
 #: Fonts that ship nothing but icons. Any glyph drawn in one is an icon,
@@ -1007,7 +1068,9 @@ ICON_FONT_RE = re.compile(
     r"awesome|icomoon|glyphicons?|octicons?|entypo|ionicons?|typicons?|socicon"
     r"|themify|feather|materialicons|linearicons|simple[\s-]*line|elegant"
     r"|foundation[\s-]*icons|dripicons|fontello|iconfont|icons?[\s-]*font"
-    r"|devicons?|academicons",
+    r"|devicons?|academicons|wingdings?|webdings|dingbats|marvosym"
+    r"|bootstrap[\s-]*icons|remixicon|tabler|boxicons|icofont|flaticon|phosphor"
+    r"|lucide|mdl2|fluent[\s-]*icons|material[\s-]*(?:icons|symbols)",
     re.IGNORECASE,
 )
 
@@ -1026,16 +1089,21 @@ def _is_icon_glyph(char: str, font: str) -> bool:
     private use area or left unmapped entirely. Deleting the link text beside
     one leaves the mark behind, pointing at nothing.
     """
-    if not char or char.isspace() or char.isalnum() or char in _NOT_ICON_CHARS:
+    if not char or char.isspace() or char in _NOT_ICON_CHARS:
+        return False
+    # An icon font's glyphs are icons even when the PDF maps them to letters.
+    if font and ICON_FONT_RE.search(font):
+        return True
+    if char.isalnum():
         return False
     code = ord(char)
     return (
-        0xE000 <= code <= 0xF8FF  # private use - where icon fonts live
+        code < 0x20 or 0x7F <= code <= 0x9F  # unmapped - Wingdings often reads as \x00
+        or 0xE000 <= code <= 0xF8FF  # private use - where icon fonts live
         or 0xF0000 <= code <= 0x10FFFD  # supplementary private use
         or code == 0xFFFD  # a glyph the font could not map back to Unicode
         or 0x2600 <= code <= 0x27BF  # symbols and dingbats: envelope, phone
         or 0x1F300 <= code <= 0x1FAFF  # pictographs and emoji
-        or bool(font and ICON_FONT_RE.search(font))
     )
 
 
@@ -1130,27 +1198,67 @@ def _safe_icon_box(
 #: A hyperlink that only ever leads to a way of contacting the candidate.
 CONTACT_URI_RE = re.compile(
     r"^\s*(?:mailto:|tel:|callto:|skype:|whatsapp:|sms:)"
-    r"|(?:linkedin|github|gitlab|behance|dribbble|medium|twitter|x)\.com"
-    r"|wa\.me|t\.me",
+    rf"|(?:^|[/.@])(?:{_SOCIAL_SITES})\.{_SOCIAL_TLDS}(?:[/:?#]|$)",
     re.IGNORECASE,
 )
 
 
-def _contact_link_rects(page: pymupdf.Page) -> list[pymupdf.Rect]:
+def _contact_links(page: pymupdf.Page) -> list[tuple[pymupdf.Rect, str]]:
     """
-    Where the page's contact hyperlinks sit.
+    Where the page's contact hyperlinks sit, and where they point.
 
     A header often hangs the link on the icon alone, with no address written
     out in text for the patterns above to match. The link's own rectangle is
     then the only thing that says where the GitHub mark is.
     """
-    rects: list[pymupdf.Rect] = []
+    found: list[tuple[pymupdf.Rect, str]] = []
     for link in page.get_links():
         uri = link.get("uri") or ""
         rect = link.get("from")
         if rect and uri and CONTACT_URI_RE.search(uri):
-            rects.append(pymupdf.Rect(rect))
-    return rects
+            found.append((pymupdf.Rect(rect), uri))
+    return found
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _link_text_spans(
+    spans: list[tuple[int, int, pymupdf.Rect]],
+    text: str,
+    links: list[tuple[pymupdf.Rect, str]],
+) -> list[tuple[int, int]]:
+    """
+    Text on this line that is the visible label of a profile link.
+
+    A header often writes just "LinkedIn" or "GitHub" and hangs the address on
+    the word. The word goes when it names the site, is the handle the link
+    points at, or is a badge's few letters such as "in". A company name linked
+    to the company's LinkedIn page is none of those, so it stays.
+    """
+    found: list[tuple[int, int]] = []
+    for rect, uri in links:
+        inside = [
+            start
+            for start, _end, char_rect in spans
+            if not text[start].isspace()
+            and pymupdf.Point(
+                (char_rect.x0 + char_rect.x1) / 2, (char_rect.y0 + char_rect.y1) / 2
+            )
+            in rect
+        ]
+        if not inside:
+            continue
+        start, end = min(inside), max(inside) + 1
+        label = _squash(text[start:end])
+        if (
+            SOCIAL_WORD_RE.fullmatch(text[start:end])
+            or len(label) <= 3
+            or label in _squash(uri)
+        ):
+            found.append((start, end))
+    return found
 
 
 def _icon_redact_options() -> dict:
@@ -1229,7 +1337,8 @@ def _icon_only_links(page: pymupdf.Page, link_rects: list[pymupdf.Rect]) -> list
 
     Nothing in the text layer gives these away, so the link's own rectangle is
     what gets redacted. Only taken when the rectangle is icon-sized and holds
-    no readable text, so a link wrapped around a line of prose is left alone.
+    at most a badge's few letters, so a link wrapped around a line of prose is
+    left alone.
     """
     found: list[pymupdf.Rect] = []
     for rect in link_rects:
@@ -1239,7 +1348,8 @@ def _icon_only_links(page: pymupdf.Page, link_rects: list[pymupdf.Rect]) -> list
             text = page.get_textbox(rect)
         except Exception:
             continue
-        if not any(ch.isalnum() for ch in text):
+        # Nothing readable, or only a badge's letters ("in").
+        if sum(ch.isalnum() for ch in text) <= 3:
             found.append(pymupdf.Rect(rect))
     return found
 
@@ -1319,6 +1429,7 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
             for text, spans in page_lines
         ]
         address_block = _address_block_lines(geometry, protect)
+        contact_links = _contact_links(page)
 
         line_hits: list[list[tuple[int, int, str]]] = []
         for number, (text, spans) in enumerate(page_lines):
@@ -1326,13 +1437,21 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
             found += [(m.start(), m.end(), "email") for m in EMAIL_RE.finditer(text)]
             found += [(s, e, "url") for s, e in _url_spans(text)]
             found += [(s, e, "phone") for s, e in _phone_spans(text)]
+            line_top = min(rect.y0 for _s, _e, rect in spans) if spans else 0.0
+            found += [
+                (s, e, "url")
+                for s, e in _social_spans(
+                    text, header=line_top <= header_limit, contact_row=bool(found)
+                )
+                + _link_text_spans(spans, text, contact_links)
+                if not (protect and protect.lower() in text[s:e].lower())
+            ]
 
             if number in address_block:
                 # A street or door line of a multi-line address: nothing on it
                 # is the city, so the whole line goes.
                 found.append((0, len(text), "location"))
             else:
-                line_top = min(rect.y0 for _s, _e, rect in spans) if spans else 0.0
                 in_header = REDACT_LOCATIONS_EVERYWHERE or line_top <= header_limit
                 found += _location_spans(text, protect, header=in_header)
 
@@ -1383,7 +1502,7 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
         # A contact link's own rectangle counts as a place a detail sat, so an
         # icon is still found when the link was never written out as text.
         chars = _page_characters(page)
-        link_rects = _contact_link_rects(page)
+        link_rects = [rect for rect, _uri in contact_links]
         cores = _contact_icons(page, targets + link_rects, chars)
         cores += [
             rect
@@ -1392,13 +1511,15 @@ def redact_contacts(doc: pymupdf.Document, candidate_name: str = "") -> Redactio
         ]
 
         # Text that is staying, which an icon's redaction box must not reach
-        # into. Characters already inside a target are going anyway.
+        # into. Characters already inside a target are going anyway, and so
+        # are letters drawn on an icon - the "in" on a LinkedIn badge.
         keepers = [
             rect
             for letter, font, rect in chars
             if not letter.isspace()
             and not _is_icon_glyph(letter, font)
             and not _mostly_covered(rect, targets)
+            and not _mostly_covered(rect, cores)
         ]
         icons = [
             box for box in (_safe_icon_box(core, keepers) for core in cores) if box

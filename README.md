@@ -129,13 +129,15 @@ The **recruiter note is required**, and its first letter is capitalised automati
 
 A CV header usually pairs each contact detail with a small icon. Deleting the text on its own leaves a row of orphaned envelope, LinkedIn and GitHub marks, which both looks wrong and still says where to find the candidate. Three kinds turn up and all three are removed:
 
-- **Icon-font glyphs** - the commonest by far. The GitHub and LinkedIn marks are usually not pictures at all but characters from an icon font (Font Awesome and the like), mapped into Unicode's private use area or left unmapped entirely. They are matched by character range and by font name, and ordinary bullets and dashes are excluded by name so a normal line is never dragged in.
+- **Icon-font glyphs** - the commonest by far. The GitHub and LinkedIn marks are usually not pictures at all but characters from an icon font (Font Awesome and the like), mapped into Unicode's private use area or left unmapped entirely (Wingdings symbols often read as a blank character). They are matched by character range and by font name - a glyph in an icon font (Font Awesome, Wingdings, Segoe MDL2, Material Icons ...) counts even when the PDF claims it is a letter - and ordinary bullets and dashes are excluded by name so a normal line is never dragged in.
 - **Small images**, and
-- **small pieces of vector art**.
+- **small pieces of vector art** - including the letters drawn on them, such as the `in` on a LinkedIn badge.
 
-Anything icon-sized (up to `ICON_MAX_SIZE`, 30pt) on a row that lost contact details, or within `ICON_MAX_DISTANCE` (16pt - about one line) above or below it, is taken. Matching horizontally as well was too strict: a header routinely wraps, leaving the GitHub mark at the right-hand end of one row and the address it pointed at on the next.
+Anything icon-sized (up to `ICON_MAX_SIZE`, 40pt) on a row that lost contact details, or within `ICON_MAX_DISTANCE` (16pt - about one line) above or below it, is taken. Matching horizontally as well was too strict: a header routinely wraps, leaving the GitHub mark at the right-hand end of one row and the address it pointed at on the next.
 
-**Contact hyperlinks are used as evidence too.** A header often hangs the link on the icon alone, with no address written out in text for the patterns to match - nothing in the text layer gives that away, so the link's own rectangle is what gets redacted. Only when it is icon-sized and holds no readable text, so a link wrapped around a line of prose is left alone.
+**Contact hyperlinks are used as evidence too.** A header often hangs the link on the icon alone, with no address written out in text for the patterns to match - nothing in the text layer gives that away, so the link's own rectangle is what gets redacted. Only when it is icon-sized and holds at most a badge's few letters, so a link wrapped around a line of prose is left alone.
+
+**Profile names go with their icons.** Besides full addresses on LinkedIn, GitHub, GitLab, Behance, Dribbble, Medium, X/Twitter, Instagram, Kaggle, LeetCode, HackerRank, Stack Overflow, Linktree and similar sites, these are removed: the visible text of a profile link (`LinkedIn`, `GitHub`, the handle, or a badge's `in`), a labelled handle (`LinkedIn: rishi-surana`), and a bare site name standing alone between separators on a contact row in the header (`email | LinkedIn | GitHub`). A site name used as a skill (`Git, GitHub, Docker`, `LinkedIn Ads`) and a company name linked to the company's LinkedIn page are left alone.
 
 Artwork goes in a second pass, the only one allowed to touch it, and it blanks the icon's pixels rather than deleting a whole image - an icon that is part of a larger sprite does not take the sprite with it. Vector art is removed only when a redaction box covers it entirely.
 
