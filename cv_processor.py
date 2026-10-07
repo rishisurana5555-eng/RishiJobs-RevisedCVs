@@ -1818,6 +1818,15 @@ def is_above_norm(current: str, expected: str) -> bool:
     return expected_value > current_value * (1 + SALARY_HIKE_THRESHOLD)
 
 
+def is_below_current(current: str, expected: str) -> bool:
+    """True when the expected salary is less than the current one."""
+    current_value = parse_salary(current)
+    expected_value = parse_salary(expected)
+    if not current_value or expected_value is None:
+        return False
+    return expected_value < current_value
+
+
 @dataclass
 class CvDetails:
     candidate_name: str
@@ -1886,12 +1895,15 @@ class CvDetails:
     def expected_salary_display(self) -> str:
         """
         The expected salary as it should appear on the branded CV: "24 LPA",
-        or "As per industry norms" (no unit) when it breaks the 30% rule.
+        or "As per industry norms" (no unit) when it breaks the 30% rule or is
+        less than the current salary.
 
         Blank reads as "As per industry norms" as well - the field is optional.
         """
-        if not self.expected_salary or is_above_norm(
-            self.current_salary, self.expected_salary
+        if (
+            not self.expected_salary
+            or is_above_norm(self.current_salary, self.expected_salary)
+            or is_below_current(self.current_salary, self.expected_salary)
         ):
             return SALARY_AS_PER_NORMS
         return format_salary(self.expected_salary)
@@ -2303,6 +2315,13 @@ def _content_segments(page: pymupdf.Page) -> list[tuple[float, float]]:
                     spans.append([rect.y0, rect.y1])
     except Exception:  # image geometry is best-effort only
         pass
+
+    # Only what is on the page counts. PDFs exported from Word / Canva often
+    # carry shapes, text boxes or images that sit partly or wholly off the
+    # page; a run measured there would ask for a band of the page that does
+    # not exist ("clip must be finite and not empty").
+    top, bottom = page.rect.y0, page.rect.y1
+    spans = [[max(start, top), min(end, bottom)] for start, end in spans if end > top and start < bottom]
 
     if not spans:
         return []

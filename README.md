@@ -7,7 +7,7 @@ Takes a candidate's CV (PDF) and returns a client-ready version:
 - **Logo on every page**, in a letterhead band matched to the CV's own paper colour
 - **Faint navy watermark** behind the content on every page
 - **Salaries in LPA** - digits only, validated on both the form and the API
-- **Expected salary protected** - a hike of more than 30% shows as "As per industry norms" instead of the figure
+- **Expected salary protected** - a hike of more than 30%, or an expected salary below the current one, shows as "As per industry norms" instead of the figure
 - **The candidate's design is untouched** - the original page is placed whole at full size, never re-typeset or shrunk to fit
 - **Downloads straight from the browser** as `<Name>_<Surname>_<Job_Title>_RishiJobs.pdf` - nothing is emailed or sent anywhere
 - **Editable Word copy on request** - after generating, *Create an editable Word copy* converts the finished CV to `.docx`, with the same file name. It is left without the watermark, and Word reflows the text, so the layout is close to the PDF but not identical
@@ -99,7 +99,7 @@ The response carries `X-Redactions` (how many details were removed), `X-Looks-Sc
 
 ## The expected-salary rule
 
-The CV prints **"As per industry norms"** instead of the expected salary when it is more than **30%** above the current salary. That wording is printed on its own, with no `LPA` after it. The same wording is printed when the expected salary is **left blank** - the field is optional.
+The CV prints **"As per industry norms"** instead of the expected salary when it is more than **30%** above the current salary, or when it is **less than** the current salary (an equal figure is printed as is). That wording is printed on its own, with no `LPA` after it. The same wording is printed when the expected salary is **left blank** - the field is optional.
 
 Both salary fields are **in LPA** and accept digits only, with an optional decimal point - `18`, `18.5`, `24`. Anything else (`18,00,000`, `₹18L`, `eighteen`) is rejected by the form *and* by the API, so a stray value cannot slip through a direct API call. The CV prints them as `18 LPA`.
 
