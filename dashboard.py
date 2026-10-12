@@ -5,7 +5,7 @@ When a PM sends a PE's candidate to the Client Team, the dashboard opens this ap
 (embedded, or in a new tab) with the details in the query string:
 
     ?from=dashboard&origin=<dashboard address>&cv_url=<Drive link of the original CV>
-     &candidate_name=...&job_title=...&current_salary=...&expected_salary=...&notice_period=...&recruiter_note=...
+     &candidate_name=...&job_title=...&current_location=...&current_salary=...&expected_salary=...&notice_period=...&recruiter_note=...
 
 The form is pre-filled from that, the original CV is fetched from Google Drive,
 and after "Generate edited CV" the PDF is posted back to the dashboard page with
@@ -45,6 +45,7 @@ LOCAL_ORIGIN = re.compile(r"^http://(localhost|127\.0\.0\.1):\d{2,5}$")
 FIELDS = {
     "candidate_name": "candidate_name",
     "job_title": "job_title",
+    "current_location": "current_location",
     "current_salary": "current_salary",
     "expected_salary": "expected_salary",
     "recruiter_note": "recruiter_note",

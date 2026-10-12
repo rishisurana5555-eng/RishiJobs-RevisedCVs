@@ -153,6 +153,12 @@ job_title = st.text_input(
     placeholder="e.g. VP Brand Marketing - used in the file name",
 )
 
+current_location = st.text_input(
+    "Current location *",
+    key="current_location",
+    placeholder="e.g. Andheri, Mumbai",
+)
+
 col1, col2 = st.columns(2)
 salary_cols = col1.columns([3, 1], vertical_alignment="bottom")
 current_salary_na = salary_cols[1].checkbox("N/A", key="current_salary_na")
@@ -229,6 +235,8 @@ def form_problems() -> list[str]:
         problems.append("Please enter the candidate's name.")
     if not job_title.strip():
         problems.append("Please enter the job title - it is used in the file name.")
+    if not current_location.strip():
+        problems.append("Please enter the candidate's current location.")
     for label, value in (("current", current_salary), ("expected", expected_salary)):
         value = value.strip()
         if label == "current" and current_salary_na:
@@ -267,6 +275,7 @@ if submitted:
             {
                 "candidate_name": candidate_name,
                 "job_title": job_title,
+                "current_location": current_location,
                 "current_salary": current_salary,
                 "expected_salary": expected_salary,
                 "notice_period": notice_other if notice_choice == "Other" else notice_choice,
@@ -380,6 +389,7 @@ if result:
             {
                 "candidateName": details.candidate_name,
                 "jobTitle": details.job_title,
+                "currentLocation": details.current_location,
                 "currentSalary": details.current_salary,
                 "expectedSalary": details.expected_salary,
                 "noticePeriod": details.notice_period,

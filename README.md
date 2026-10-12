@@ -3,7 +3,7 @@
 Takes a candidate's CV (PDF) and returns a client-ready version:
 
 - **Contact details removed** - email, phone (also partly hidden ones like `94xxx45xxx`), LinkedIn/web profiles, personal sites (`Portfolio: ishita-product.example.com`, `name.github.io`, `name.dev`), their icons, and the candidate's street address are deleted from the page, not covered over
-- **Recruiter details box on the CV itself** - current salary, expected salary and notice period across one row, with the recruiter's note full-width underneath
+- **Recruiter details box on the CV itself** - current location, current salary, expected salary and notice period across one row, with the recruiter's note full-width underneath
 - **Logo on every page**, in a letterhead band matched to the CV's own paper colour
 - **Faint navy watermark** behind the content on every page
 - **Salaries in LPA** - digits only, validated on both the form and the API
@@ -11,7 +11,7 @@ Takes a candidate's CV (PDF) and returns a client-ready version:
 - **The candidate's design is untouched** - the original page is placed whole at full size, never re-typeset or shrunk to fit
 - **Downloads straight from the browser** as `<Name>_<Surname>_<Job_Title>_RishiJobs.pdf` - nothing is emailed or sent anywhere
 - **Editable Word copy on request** - after generating, *Create an editable Word copy* converts the finished CV to `.docx`, with the same file name. It is left without the watermark, and Word reflows the text, so the layout is close to the PDF but not identical
-- **Every field is required** - name, job title, both salaries, notice period and recruiter note
+- **Every field is required** - name, job title, current location, both salaries, notice period and recruiter note
 - **Names tidied** - however the name is typed (`PRIYA raman`), the CV and the file name use `Priya Raman`
 - **Notice period** - pick a preset, or *Other* and type a number of days (`45`, digits only); the CV shows `45 days`
 
@@ -36,7 +36,7 @@ The Streamlit app calls the processing code directly, so that is the only proces
 
 When a PM sends a PE's candidate to the Client Team, the dashboard opens this app (embedded in its form, or in a new tab) with the candidate's details in the link. [dashboard.py](dashboard.py) handles that:
 
-- The form is **pre-filled** from the link - candidate name, job title, salaries, notice period and recruiter note - once per session, so edits made here are kept.
+- The form is **pre-filled** from the link - candidate name, job title, current location, salaries, notice period and recruiter note - once per session, so edits made here are kept.
 - The **original CV is loaded from its Google Drive link** (`cv_url`), so nothing needs uploading. Only `drive.google.com` / `docs.google.com` links are fetched, and the file must be shared as "anyone with the link" (the dashboard's upload script does that). Uploading a PDF here still replaces it.
 - After **Generate edited CV**, the PDF is also **posted back to the dashboard page** (`window.postMessage`), where it is attached to the form. The download button works as before.
 
@@ -79,13 +79,14 @@ Embedding needs the app to be **public** on Streamlit Community Cloud; a private
 | `POST /api/cv/preview` | Same inputs, returns JSON listing what would be redacted |
 | `POST /api/cv/detect-name` | Reads the candidate's name off a CV, to pre-fill the form |
 
-Send a multipart form with `cv_file` plus `candidate_name`, `job_title`, `current_salary`, `expected_salary`, `notice_period` and `recruiter_note` - all required except `expected_salary`. A bare number for `notice_period` (`45`) is printed as `45 days`. A JSON body with the PDF in `cv_base64` works too. The logo is fixed and cannot be overridden through the API.
+Send a multipart form with `cv_file` plus `candidate_name`, `job_title`, `current_location`, `current_salary`, `expected_salary`, `notice_period` and `recruiter_note` - all required except `expected_salary`. A bare number for `notice_period` (`45`) is printed as `45 days`. A JSON body with the PDF in `cv_base64` works too. The logo is fixed and cannot be overridden through the API.
 
 ```bash
 curl -X POST http://127.0.0.1:5001/api/cv/process \
   -F "cv_file=@samples/cv.pdf" \
   -F "candidate_name=Priya Raman" \
   -F "job_title=Brand Manager" \
+  -F "current_location=Andheri, Mumbai" \
   -F "current_salary=18" \
   -F "expected_salary=22" \
   -F "recruiter_note=Strong fit for the brand role." \

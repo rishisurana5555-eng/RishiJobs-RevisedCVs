@@ -9,7 +9,8 @@ Takes a candidate CV (PDF) and returns a branded copy:
   * of the candidate's address only the area, city and state survive - the
     door, street, building and postcode go
   * a details box on the CV itself carries the recruiter's commercial details:
-    salary, expected salary and notice period on one row, the note below
+    current location, salary, expected salary and notice period on one row,
+    the note below
   * the logo sits in a header band on every page, with a faint watermark behind
   * the candidate's own CV design is left untouched - the page is placed whole,
     never re-typeset
@@ -1830,6 +1831,7 @@ def is_below_current(current: str, expected: str) -> bool:
 @dataclass
 class CvDetails:
     candidate_name: str
+    current_location: str = ""
     current_salary: str = ""
     expected_salary: str = ""
     notice_period: str = ""
@@ -1850,6 +1852,10 @@ class CvDetails:
         job_title = " ".join(str(payload.get("job_title", "")).split())
         if not job_title:
             errors.append("Job title is required.")
+
+        location = " ".join(str(payload.get("current_location", "")).split())
+        if not location:
+            errors.append("Current location is required.")
 
         salaries = {}
         for key, label in (
@@ -1884,6 +1890,7 @@ class CvDetails:
             raise ValueError(errors)
         return cls(
             candidate_name=name,
+            current_location=location,
             current_salary=salaries["current_salary"],
             expected_salary=salaries["expected_salary"],
             notice_period=notice,
@@ -1910,6 +1917,7 @@ class CvDetails:
 
     def columns(self) -> list[tuple[str, str]]:
         return [
+            ("Current Location", self.current_location),
             ("Current Salary", format_current_salary(self.current_salary)),
             ("Expected Salary", self.expected_salary_display),
             ("Notice Period", self.notice_period or "Not specified"),
@@ -1991,8 +1999,8 @@ def _draw_details_box(
     """
     Draw the recruiter's details on the CV page itself and return its bottom.
 
-    Laid out as a single row of three columns - current salary, expected
-    salary, notice period - with the recruiter note on its own full-width row
+    Laid out as a single row of four columns - current location, current
+    salary, expected salary, notice period - with the recruiter note on its own full-width row
     underneath, since the note is normally far longer than the rest.
     """
     size = page.rect
